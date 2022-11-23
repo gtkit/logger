@@ -23,12 +23,11 @@ type GormLogger struct {
 
 var glogger GormLogger
 
-func NewGormLogger() GormLogger {
+func NewGormLogger(sqllog bool) GormLogger {
 	glogger = GormLogger{
-		// ZapLogger:     Zlog,                   // 使用全局的 Logger 对象
 		ZapLogger:     Zlog,                   // 使用全局的 Logger 对象
 		SlowThreshold: 200 * time.Millisecond, // 慢查询阈值，单位为千分之一秒
-		SqlLog:        true,
+		SqlLog:        sqllog,
 	}
 	return glogger
 }
