@@ -12,16 +12,17 @@ import (
 )
 
 type Option struct {
-	Level         string
-	ConsoleStdout bool
-	FileStdout    bool
+	Level         string // 日志级别
+	ConsoleStdout bool   // 日志是否输出到控制台
+	FileStdout    bool   // 日志是否输出到文件
 	Division      string // 日志切割方式, time:日期, size:大小, 默认按照大小分割
 	Path          string // 日志文件路径
+	SqlLog        bool   // 是否打印 sql 执行日志
 }
 
 var (
-	Zlog         *zap.Logger
-	LoggerOption *Option
+	zlog       *zap.Logger
+	zlogoption *Option
 )
 
 const (
@@ -39,14 +40,19 @@ var levelMap = map[string]zapcore.Level{
 	"fatal":  zapcore.FatalLevel,
 }
 
+func NewZap(option *Option) {
+	zlogoption = option
+	Init()
+}
+
 func Init() {
 	var syncWriters []zapcore.WriteSyncer
-	level := getLoggerLevel(LoggerOption.Level)
+	level := getLoggerLevel(zlogoption.Level)
 
 	writeSyncer := getFileConfig() // 获取日志写入的路径
 	encoder := getEncoder()        // 编码配置
 
-	if LoggerOption.ConsoleStdout {
+	if zlogoption.ConsoleStdout {
 		syncWriters = append(syncWriters, zapcore.AddSync(os.Stdout)) // 打印到控制台
 	}
 	/**
@@ -54,7 +60,7 @@ func Init() {
 		file, _ := os.Create("./test.log")
 	    ori_writeSyncer := zapcore.AddSync(file)
 	*/
-	if LoggerOption.FileStdout {
+	if zlogoption.FileStdout {
 		syncWriters = append(
 			syncWriters,
 			zapcore.AddSync(writeSyncer), // 打印到文件
@@ -77,8 +83,11 @@ func Init() {
 	)
 
 	zap.ReplaceGlobals(logger) // ReplaceGlobals来将全局的 logger 替换为我们通过配置定制的 logger
-	Zlog = logger
+	zlog = logger
 
+}
+func Zlog() *zap.Logger {
+	return zlog
 }
 
 func getLoggerLevel(lvl string) zapcore.Level {
@@ -91,13 +100,13 @@ func getLoggerLevel(lvl string) zapcore.Level {
 func getFileConfig() zapcore.WriteSyncer {
 	var filehook zapcore.WriteSyncer
 
-	switch LoggerOption.Division {
+	switch zlogoption.Division {
 	case SizeDivision:
-		filehook = getFileSizeConfig(LoggerOption.Path)
+		filehook = getFileSizeConfig(zlogoption.Path)
 	case TimeDivision:
-		filehook = getFileTimeConfig(LoggerOption.Path)
+		filehook = getFileTimeConfig(zlogoption.Path)
 	default:
-		filehook = getFileSizeConfig(LoggerOption.Path)
+		filehook = getFileSizeConfig(zlogoption.Path)
 	}
 	return filehook
 }
@@ -143,61 +152,61 @@ func getEncoder() zapcore.Encoder {
 }
 
 func Debug(args ...interface{}) {
-	Zlog.Sugar().Debug(args...)
+	zlog.Sugar().Debug(args...)
 }
 
 func Debugf(format string, args ...interface{}) {
-	Zlog.Sugar().Debugf(format, args...)
+	zlog.Sugar().Debugf(format, args...)
 }
 
 func Info(args ...interface{}) {
-	Zlog.Sugar().Info(args...)
+	zlog.Sugar().Info(args...)
 }
 
 func Infof(format string, args ...interface{}) {
-	Zlog.Sugar().Infof(format, args...)
+	zlog.Sugar().Infof(format, args...)
 }
 
 func Warn(args ...interface{}) {
-	Zlog.Sugar().Warn(args...)
+	zlog.Sugar().Warn(args...)
 }
 
 func Warnf(format string, args ...interface{}) {
-	Zlog.Sugar().Warnf(format, args...)
+	zlog.Sugar().Warnf(format, args...)
 }
 
 func Error(args ...interface{}) {
-	Zlog.Sugar().Error(args...)
+	zlog.Sugar().Error(args...)
 }
 
 func Errorf(format string, args ...interface{}) {
-	Zlog.Sugar().Errorf(format, args...)
+	zlog.Sugar().Errorf(format, args...)
 }
 
 func DPanic(args ...interface{}) {
-	Zlog.Sugar().DPanic(args...)
+	zlog.Sugar().DPanic(args...)
 }
 
 func DPanicf(format string, args ...interface{}) {
-	Zlog.Sugar().DPanicf(format, args...)
+	zlog.Sugar().DPanicf(format, args...)
 }
 
 func Panic(args ...interface{}) {
-	Zlog.Sugar().Panic(args...)
+	zlog.Sugar().Panic(args...)
 }
 
 func Panicf(format string, args ...interface{}) {
-	Zlog.Sugar().Panicf(format, args...)
+	zlog.Sugar().Panicf(format, args...)
 }
 
 func Fatal(args ...interface{}) {
-	Zlog.Sugar().Fatal(args...)
+	zlog.Sugar().Fatal(args...)
 }
 
 func Fatalf(format string, args ...interface{}) {
-	Zlog.Sugar().Fatalf(format, args...)
+	zlog.Sugar().Fatalf(format, args...)
 }
 
 func Infow(msg string, keysAndValues ...interface{}) {
-	Zlog.Sugar().Infow(msg, keysAndValues...)
+	zlog.Sugar().Infow(msg, keysAndValues...)
 }

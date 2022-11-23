@@ -21,15 +21,12 @@ type GormLogger struct {
 	SqlLog        bool
 }
 
-var glogger GormLogger
-
-func NewGormLogger(sqllog bool) GormLogger {
-	glogger = GormLogger{
-		ZapLogger:     Zlog,                   // 使用全局的 Logger 对象
+func NewGormLogger() GormLogger {
+	return GormLogger{
+		ZapLogger:     zlog,                   // 使用全局的 Logger 对象
 		SlowThreshold: 200 * time.Millisecond, // 慢查询阈值，单位为千分之一秒
-		SqlLog:        sqllog,
+		SqlLog:        zlogoption.SqlLog,
 	}
-	return glogger
 }
 
 // LogMode 实现 gormlogger.Interface 的 LogMode 方法
@@ -37,7 +34,7 @@ func (l GormLogger) LogMode(level gormlogger.LogLevel) gormlogger.Interface {
 	return GormLogger{
 		ZapLogger:     l.ZapLogger,
 		SlowThreshold: l.SlowThreshold,
-		SqlLog:        true,
+		SqlLog:        l.SqlLog,
 	}
 }
 
@@ -83,7 +80,7 @@ func (l GormLogger) Trace(ctx context.Context, begin time.Time, fc func() (sql s
 	}
 
 	// 记录所有 SQL 请求
-	if glogger.SqlLog {
+	if l.SqlLog {
 		l.logger().Debug("Database Query", logFields...)
 	}
 
