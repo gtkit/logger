@@ -6,14 +6,13 @@ import (
 	"time"
 
 	rotatelogs "github.com/lestrrat-go/file-rotatelogs"
-	"github.com/spf13/viper"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 
 type Option struct {
-	Level         zapcore.Level
+	Level         string
 	ConsoleStdout bool
 	FileStdout    bool
 	Division      string // 日志切割方式, time:日期, size:大小, 默认按照大小分割
@@ -42,7 +41,7 @@ var levelMap = map[string]zapcore.Level{
 
 func Init() {
 	var syncWriters []zapcore.WriteSyncer
-	level := getLoggerLevel(viper.GetString("log.level"))
+	level := getLoggerLevel(LoggerOption.Level)
 
 	writeSyncer := getFileConfig() // 获取日志写入的路径
 	encoder := getEncoder()        // 编码配置
