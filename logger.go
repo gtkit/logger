@@ -102,35 +102,35 @@ func getFileConfig() zapcore.WriteSyncer {
 
 	switch zlogoption.Division {
 	case SizeDivision:
-		filehook = getFileSizeConfig(zlogoption.Path)
+		filehook = getFileSizeConfig()
 	case TimeDivision:
-		filehook = getFileTimeConfig(zlogoption.Path)
+		filehook = getFileTimeConfig()
 	default:
-		filehook = getFileSizeConfig(zlogoption.Path)
+		filehook = getFileSizeConfig()
 	}
 	return filehook
 }
 
-func getFileSizeConfig(path string) zapcore.WriteSyncer {
+func getFileSizeConfig() zapcore.WriteSyncer {
 
 	lumberJackLogger := &lumberjack.Logger{
-		Filename:   path + "log.log", // 日志文件路径
-		MaxSize:    128,              // 日志文件大小,单个文件最大尺寸，默认单位 M
-		MaxAge:     30,               // 最长保存天数
-		MaxBackups: 300,              // 最多备份几个
-		Compress:   true,             // 是否压缩文件，使用gzip
-		LocalTime:  true,             // 使用本地时间
+		Filename:   zlogoption.Path + "log.log", // 日志文件路径
+		MaxSize:    128,                         // 日志文件大小,单个文件最大尺寸，默认单位 M
+		MaxAge:     30,                          // 最长保存天数
+		MaxBackups: 300,                         // 最多备份几个
+		Compress:   true,                        // 是否压缩文件，使用gzip
+		LocalTime:  true,                        // 使用本地时间
 	}
 	return zapcore.AddSync(lumberJackLogger)
 }
 
-func getFileTimeConfig(path string) zapcore.WriteSyncer {
+func getFileTimeConfig() zapcore.WriteSyncer {
 	// 生成rotatelogs的Logger 实际生成的文件名 demo.log.YYmmddHH
 	// demo.log是指向最新日志的链接
 	// 保存7天内的日志，每1小时(整点)分割一次日志
 	hook, err := rotatelogs.New(
-		path+"%Y%m%d.log", // 没有使用go风格反人类的format格式
-		rotatelogs.WithLinkName(path+"log.log"),
+		zlogoption.Path+"%Y%m%d.log", // 没有使用go风格反人类的format格式
+		rotatelogs.WithLinkName(zlogoption.Path+"log.log"),
 		rotatelogs.WithMaxAge(time.Hour*24*7),
 		rotatelogs.WithRotationTime(time.Hour*24),
 	)
