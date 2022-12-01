@@ -45,10 +45,10 @@ func NewZap(option *Option) {
 	if len(option.Path) == 0 {
 		zlogoption.Path = "./logs/"
 	}
-	Init()
+	initzap()
 }
 
-func Init() {
+func initzap() {
 	var syncWriters []zapcore.WriteSyncer
 	level := getLoggerLevel(zlogoption.Level)
 
