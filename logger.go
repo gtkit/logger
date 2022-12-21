@@ -167,6 +167,10 @@ func Info(args ...interface{}) {
 	zlog.Sugar().Info(args...)
 }
 
+func ZInfo(msg string, fields ...zap.Field) {
+	zlog.Info(msg, fields...)
+}
+
 func Infof(format string, args ...interface{}) {
 	zlog.Sugar().Infof(format, args...)
 }
