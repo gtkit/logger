@@ -84,6 +84,7 @@ func initzap() {
 		zap.AddCallerSkip(1),              // AddCallerSkip 显示调用打印日志的是哪一行的 code 行数
 		zap.AddStacktrace(zap.ErrorLevel), // Error 时才会显示 stacktrace
 	)
+	defer logger.Sync()
 
 	zap.ReplaceGlobals(logger) // ReplaceGlobals来将全局的 logger 替换为我们通过配置定制的 logger
 	zlog = logger
@@ -115,14 +116,14 @@ func getFileConfig() zapcore.WriteSyncer {
 }
 
 func getFileSizeConfig() zapcore.WriteSyncer {
-
+	logname := time.Now().Format("2006-01-02.log")
 	lumberJackLogger := &lumberjack.Logger{
-		Filename:   zlogoption.Path + "log.log", // 日志文件路径
-		MaxSize:    128,                         // 日志文件大小,单个文件最大尺寸，默认单位 M
-		MaxAge:     30,                          // 最长保存天数
-		MaxBackups: 300,                         // 最多备份几个
-		Compress:   true,                        // 是否压缩文件，使用gzip
-		LocalTime:  true,                        // 使用本地时间
+		Filename:   zlogoption.Path + logname, // 日志文件路径
+		MaxSize:    128,                       // 日志文件大小,单个文件最大尺寸，默认单位 M
+		MaxAge:     30,                        // 最长保存天数
+		MaxBackups: 300,                       // 最多备份几个
+		Compress:   true,                      // 是否压缩文件，使用gzip
+		LocalTime:  true,                      // 使用本地时间
 	}
 	return zapcore.AddSync(lumberJackLogger)
 }
