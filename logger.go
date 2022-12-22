@@ -40,11 +40,35 @@ var levelMap = map[string]zapcore.Level{
 	"fatal":  zapcore.FatalLevel,
 }
 
-func NewZap(option *Option) {
+// 实例化zap
+func NewZap(option *Option, opts ...Options) {
 	zlogoption = option
 	if len(option.Path) == 0 {
 		zlogoption.Path = "./logs/"
 	}
+	initzap()
+}
+
+// 函数选项模式实例化zap
+func NewZapWithOptions(opts ...Options) {
+	var op options
+	for _, o := range opts {
+		o.apply(&op)
+	}
+
+	zlogoption = &Option{
+		Level:         op.level,
+		ConsoleStdout: op.consolestdout,
+		FileStdout:    op.filestdout,
+		Division:      op.division,
+		Path:          op.path,
+		SqlLog:        op.sqllog,
+	}
+	if len(op.path) == 0 {
+		zlogoption.Path = "./logs/"
+	}
+
+	// fmt.Printf("zlogoption:%+v\n", zlogoption)
 	initzap()
 }
 
@@ -174,7 +198,6 @@ func ZInfo(msg string, fields ...zap.Field) {
 func Infof(format string, args ...interface{}) {
 	zlog.Sugar().Infof(format, args...)
 }
-
 func Warn(args ...interface{}) {
 	zlog.Sugar().Warn(args...)
 }

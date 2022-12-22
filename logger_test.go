@@ -37,3 +37,31 @@ func TestNewZap(t *testing.T) {
 		})
 	}
 }
+
+func TestNewZapWithOptions(t *testing.T) {
+	type args struct {
+		opts []Options
+	}
+	tests := []struct {
+		name string
+		args args
+	}{
+		// TODO: Add test cases.
+		{
+			name: "NewZapWithOptions",
+			args: args{opts: []Options{
+				WithConsole(true),
+				WithDivision("size"),
+				WithFile(true),
+				WithSqlLog(true),
+				WithLevel("info"),
+			}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			NewZapWithOptions(tt.args.opts...)
+			Info(tt.name + "--- zap log with options success ----")
+		})
+	}
+}
