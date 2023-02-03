@@ -6,6 +6,7 @@ import (
 	"time"
 
 	rotatelogs "github.com/lestrrat-go/file-rotatelogs"
+	"gitlab.superjq.com/go-tools/news"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"gopkg.in/natefinch/lumberjack.v2"
@@ -199,6 +200,12 @@ func ZInfo(msg string, fields ...zap.Field) {
 func LogInfoIf(err error) {
 	if err != nil {
 		zlog.Info("Error Occurred:", zap.Error(err))
+	}
+}
+func LogFsWarn(err error, fsurl string) {
+	if err != nil {
+		zlog.Info("Error Occurred:", zap.Error(err))
+		news.FsWarnText(fsurl, err.Error())
 	}
 }
 
