@@ -118,6 +118,12 @@ func initzap() {
 func Zlog() *zap.Logger {
 	return zlog
 }
+func NewLog() *zap.Logger {
+	return zlog
+}
+func NewSugar() *zap.SugaredLogger {
+	return zlog.Sugar()
+}
 
 func getLoggerLevel(lvl string) zapcore.Level {
 	if level, ok := levelMap[lvl]; ok {
