@@ -1,0 +1,2 @@
+2022-11-27T00:42:25.429+0800	INFO	logger/logger_test.go:34	-----zap logger success ------
+2022-11-27T00:48:17.982+0800	INFO	logger/logger_test.go:35	--- zap log success ----

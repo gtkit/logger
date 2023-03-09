@@ -1,4 +1,4 @@
-module gitlab.superjq.com/go-tools/logger
+module github.com/gtkit/logger
 
 go 1.20
 
