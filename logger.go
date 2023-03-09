@@ -5,8 +5,8 @@ import (
 	"os"
 	"time"
 
+	"github.com/gtkit/news"
 	rotatelogs "github.com/lestrrat-go/file-rotatelogs"
-	"gitlab.superjq.com/go-tools/news"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"gopkg.in/natefinch/lumberjack.v2"
