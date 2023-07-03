@@ -22,6 +22,13 @@ type GormLogger struct {
 }
 
 func NewGormLogger() GormLogger {
+	if zlog == nil {
+		NewZap(&Option{
+			FileStdout: true,
+			Division:   "size",
+		})
+	}
+
 	return GormLogger{
 		ZapLogger:     zlog,                   // 使用全局的 Logger 对象
 		SlowThreshold: 200 * time.Millisecond, // 慢查询阈值，单位为千分之一秒

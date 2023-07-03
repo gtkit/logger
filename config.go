@@ -41,7 +41,7 @@ var levelMap = map[string]zapcore.Level{
 }
 
 // 实例化zap
-func NewZap(option *Option, opts ...Options) {
+func NewZap(option *Option) {
 	zlogoption = option
 	if len(option.Path) == 0 {
 		zlogoption.Path = "./logs/"
