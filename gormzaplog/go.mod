@@ -1,4 +1,4 @@
-module github.com/gtkit/gormzaplog
+module github.com/gtkit/logger/gormzaplog
 
 go 1.20
 
