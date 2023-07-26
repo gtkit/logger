@@ -1,4 +1,4 @@
-package logger
+package gormlog
 
 import (
 	"context"
@@ -15,49 +15,49 @@ import (
 )
 
 // GormLogger 操作对象，实现 gormlogger.Interface
-type GormLogger struct {
+type GormZapLogger struct {
 	ZapLogger     *zap.Logger
 	SlowThreshold time.Duration
 	SqlLog        bool
 }
 
-func NewGormLogger() GormLogger {
-	if zlog == nil {
-		NewZap(&Option{
-			FileStdout: true,
-			Division:   "size",
-		})
-	}
+func ZapLogger(logger *zap.Logger, sqlLog bool) GormZapLogger {
+	// if logger.Zlog() == nil {
+	// 	logger.NewZap(&logger.Option{
+	// 		FileStdout: true,
+	// 		Division:   "size",
+	// 	})
+	// }
 
-	return GormLogger{
-		ZapLogger:     zlog,                   // 使用全局的 Logger 对象
+	return GormZapLogger{
+		ZapLogger:     logger,                 // 使用全局的 Logger 对象
 		SlowThreshold: 200 * time.Millisecond, // 慢查询阈值，单位为千分之一秒
-		SqlLog:        zlogoption.SqlLog,
+		SqlLog:        sqlLog,
 	}
 }
 
 // LogMode 实现 gormlogger.Interface 的 LogMode 方法
-func (l GormLogger) LogMode(level gormlogger.LogLevel) gormlogger.Interface {
-	return GormLogger{
+func (l GormZapLogger) LogMode(level gormlogger.LogLevel) gormlogger.Interface {
+	return GormZapLogger{
 		ZapLogger:     l.ZapLogger,
 		SlowThreshold: l.SlowThreshold,
 		SqlLog:        l.SqlLog,
 	}
 }
 
-func (l GormLogger) Info(ctx context.Context, s string, i ...interface{}) {
+func (l GormZapLogger) Info(ctx context.Context, s string, i ...interface{}) {
 	l.logger().Sugar().Debugf(s, i...)
 }
 
-func (l GormLogger) Warn(ctx context.Context, s string, i ...interface{}) {
+func (l GormZapLogger) Warn(ctx context.Context, s string, i ...interface{}) {
 	l.logger().Sugar().Warnf(s, i...)
 }
 
-func (l GormLogger) Error(ctx context.Context, s string, i ...interface{}) {
+func (l GormZapLogger) Error(ctx context.Context, s string, i ...interface{}) {
 	l.logger().Sugar().Errorf(s, i...)
 }
 
-func (l GormLogger) Trace(ctx context.Context, begin time.Time, fc func() (sql string, rowsAffected int64), err error) {
+func (l GormZapLogger) Trace(ctx context.Context, begin time.Time, fc func() (sql string, rowsAffected int64), err error) {
 	// 获取运行时间
 	elapsed := time.Since(begin)
 	// 获取 SQL 请求和返回条数
@@ -92,7 +92,7 @@ func (l GormLogger) Trace(ctx context.Context, begin time.Time, fc func() (sql s
 	}
 
 }
-func (l GormLogger) logger() *zap.Logger {
+func (l GormZapLogger) logger() *zap.Logger {
 
 	// 跳过 gorm 内置的调用
 	var (

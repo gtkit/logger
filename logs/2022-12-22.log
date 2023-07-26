@@ -1,6 +1,0 @@
-2022-12-22T18:37:52.020+0800	INFO	logger/logger_test.go:50	--- zap log with options success ----
-2022-12-22T18:48:21.675+0800	INFO	logger/logger_test.go:50	--- zap log with options success ----
-2022-12-22T18:48:36.949+0800	INFO	logger/logger_test.go:50	--- zap log with options success ----
-2022-12-22T19:03:17.114+0800	INFO	logger/logger_test.go:76	--- zap log with options success ----
-2022-12-22T19:03:35.362+0800	INFO	logger/logger_test.go:76	--- zap log with options success ----
-2022-12-22T19:05:13.213+0800	INFO	logger/logger_test.go:64	NewZapWithOptions--- zap log with options success ----

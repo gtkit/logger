@@ -1,5 +1,5 @@
 // @Author xiaozhaofu 2022/11/27 00:30:00
-package logger
+package test
 
 import (
 	"testing"
