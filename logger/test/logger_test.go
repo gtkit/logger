@@ -5,12 +5,14 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+
+	"logger/logger"
 )
 
 func TestNewZap(t *testing.T) {
 	assert2 := assert.New(t)
 	type args struct {
-		option *Option
+		option *logger.Option
 	}
 	tests := []struct {
 		name string
@@ -18,7 +20,7 @@ func TestNewZap(t *testing.T) {
 	}{
 		{
 			name: "logger",
-			args: struct{ option *Option }{option: &Option{
+			args: struct{ option *logger.Option }{option: &logger.Option{
 				Level:         "info",
 				ConsoleStdout: true,
 				FileStdout:    true,
@@ -29,10 +31,10 @@ func TestNewZap(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			NewZap(tt.args.option)
+			logger.NewZap(tt.args.option)
 
-			if assert2.NotNil(Zlog()) {
-				Info("--- zap log success ----")
+			if assert2.NotNil(logger.Zlog()) {
+				logger.Info("--- zap log success ----")
 			}
 		})
 	}
@@ -40,7 +42,7 @@ func TestNewZap(t *testing.T) {
 
 func TestNewZapWithOptions(t *testing.T) {
 	type args struct {
-		opts []Options
+		opts []logger.Options
 	}
 	tests := []struct {
 		name string
@@ -49,19 +51,19 @@ func TestNewZapWithOptions(t *testing.T) {
 		// TODO: Add test cases.
 		{
 			name: "NewZapWithOptions",
-			args: args{opts: []Options{
-				WithConsole(true),
-				WithDivision("size"),
-				WithFile(true),
-				WithSqlLog(true),
-				WithLevel("info"),
+			args: args{opts: []logger.Options{
+				logger.WithConsole(true),
+				logger.WithDivision("size"),
+				logger.WithFile(true),
+				logger.WithSqlLog(true),
+				logger.WithLevel("info"),
 			}},
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			NewZapWithOptions(tt.args.opts...)
-			Info(tt.name + "--- zap log with options success ----")
+			logger.NewZapWithOptions(tt.args.opts...)
+			logger.Info(tt.name + "--- zap log with options success ----")
 		})
 	}
 }
