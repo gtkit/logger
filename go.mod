@@ -1,4 +1,4 @@
-module github.com/gtkit/logger/logger
+module github.com/gtkit/logger
 
 go 1.20
 
