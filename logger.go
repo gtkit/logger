@@ -6,6 +6,9 @@ import (
 	"go.uber.org/zap"
 )
 
+func Sql() bool {
+	return zlogoption.SqlLog
+}
 func Zlog() *zap.Logger {
 	return zlog
 }
