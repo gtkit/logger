@@ -2,104 +2,95 @@
 package logger
 
 import (
-	"github.com/gtkit/news"
 	"go.uber.org/zap"
 )
 
-// Sql 是否打印 sql 执行日志
+// Sql 是否打印 sql 执行日志.
 func Sql() bool {
 	return zlogoption.SqlLog
 }
 
-// Zlog 获取 zap.Logger
+// Zlog 获取 zap.Logger.
 func Zlog() *zap.Logger {
 	return zlog
 }
 
-// NewLog 获取 zap.Logger
+// NewLog 获取 zap.Logger.
 func NewLog() *zap.Logger {
 	return zlog
 }
 
-// NewSugar 获取 zap.SugaredLogger
+// NewSugar 获取 zap.SugaredLogger.
 func NewSugar() *zap.SugaredLogger {
 	return zlog.Sugar()
 }
 
-// Sugar 获取 zap.SugaredLogger
+// Sugar 获取 zap.SugaredLogger.
 func Sugar() *zap.SugaredLogger {
 	return zlog.Sugar()
 }
 
-// Debug 记录 debug 等级的日志
+// Debug 记录 debug 等级的日志.
 func Debug(args ...interface{}) {
 	zlog.Sugar().Debug(args...)
 }
 
-// Debugf 记录 debug 等级的日志
+// Debugf 记录 debug 等级的日志.
 func Debugf(format string, args ...interface{}) {
 	zlog.Sugar().Debugf(format, args...)
 }
 
-// Info 记录 info 等级的日志
+// Info 记录 info 等级的日志.
 func Info(args ...interface{}) {
 	zlog.Sugar().Info(args...)
 }
 
-// ZInfo 记录 info 等级的日志
+// ZInfo 记录 info 等级的日志.
 func ZInfo(msg string, fields ...zap.Field) {
 	zlog.Info(msg, fields...)
 }
 
-// FsWarn 记录 info 等级的日志, 并发送飞书告警
-func FsWarn(err error, fsurl string) {
-	if err != nil {
-		zlog.Info("Error Occurred:", zap.Error(err))
-		news.FsWarnText(fsurl, err.Error())
-	}
-}
-
-// Infof 记录 info 等级的日志
+// Infof 记录 info 等级的日志.
 func Infof(format string, args ...interface{}) {
 	zlog.Sugar().Infof(format, args...)
 }
 
-// Warn 记录 warn 等级的日志
+// Warn 记录 warn 等级的日志.
 func Warn(args ...interface{}) {
 	zlog.Sugar().Warn(args...)
 }
 
-// ZWarn 记录 warn 等级的日志
+// ZWarn 记录 warn 等级的日志.
 func ZWarn(moduleName string, fields ...zap.Field) {
 	zlog.Warn(moduleName, fields...)
 }
 
-// Warnf 记录 warn 等级的日志
+// Warnf 记录 warn 等级的日志.
 func Warnf(format string, args ...interface{}) {
 	zlog.Sugar().Warnf(format, args...)
 }
 
-// Error 记录 error 等级的日志
+// Error 记录 error 等级的日志.
 func Error(args ...interface{}) {
 	zlog.Sugar().Error(args...)
 }
 
-// Error
+// ZError Error.
 func ZError(moduleName string, fields ...zap.Field) {
 	zlog.Error(moduleName, fields...)
 }
 
-// Errorf 记录 error 等级的日志
+// Errorf 记录 error 等级的日志.
 func Errorf(format string, args ...interface{}) {
 	zlog.Sugar().Errorf(format, args...)
 }
 
-// DPanic 记录 dpanic 等级的日志
+// DPanic 记录 dpanic 等级的日志.
 func DPanic(args ...interface{}) {
 	zlog.Sugar().DPanic(args...)
 }
 
-// DPanicf 记录 dpanic 等级的日志
+// DPanicf 记录 dpanic 等级的日志.
 func DPanicf(format string, args ...interface{}) {
 	zlog.Sugar().DPanicf(format, args...)
 }
@@ -108,17 +99,17 @@ func Panic(args ...interface{}) {
 	zlog.Sugar().Panic(args...)
 }
 
-// Panic 级别同 Error(), 写完 log 后调用 os.Exit(1) 退出程序
+// Panic 级别同 Error(), 写完 log 后调用 os.Exit(1) 退出程序.
 func Panicf(format string, args ...interface{}) {
 	zlog.Sugar().Panicf(format, args...)
 }
 
-// Fatal 级别同 Error(), 写完 log 后调用 os.Exit(1) 退出程序
+// Fatal 级别同 Error(), 写完 log 后调用 os.Exit(1) 退出程序.
 func Fatal(args ...interface{}) {
 	zlog.Sugar().Fatal(args...)
 }
 
-// Fatal 级别同 Error(), 写完 log 后调用 os.Exit(1) 退出程序
+// Fatal 级别同 Error(), 写完 log 后调用 os.Exit(1) 退出程序.
 func ZFatal(moduleName string, fields ...zap.Field) {
 	zlog.Fatal(moduleName, fields...)
 }
@@ -131,7 +122,7 @@ func Infow(msg string, keysAndValues ...interface{}) {
 	zlog.Sugar().Infow(msg, keysAndValues...)
 }
 
-// LogIf 当 err != nil 时记录 error 等级的日志
+// LogIf 当 err != nil 时记录 error 等级的日志.
 func LogIf(err error) {
 	if err != nil {
 		zlog.Error("Error Occurred:", zap.Error(err))
@@ -143,7 +134,7 @@ func LogErrIf(err error) {
 	}
 }
 
-// LogInfoIf 当 err != nil 时记录 info 等级的日志
+// LogInfoIf 当 err != nil 时记录 info 等级的日志.
 func LogInfoIf(err error) {
 	if err != nil {
 		zlog.Info("Error Occurred:", zap.Error(err))

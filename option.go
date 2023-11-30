@@ -21,7 +21,7 @@ func (l levelopt) apply(opts *options) {
 	opts.level = l.level
 }
 
-// #设置日志级别
+// WithLevel #设置日志级别.
 func WithLevel(l string) Options {
 	return levelopt{level: l}
 }
@@ -32,7 +32,7 @@ func (c consoleopt) apply(opts *options) {
 	opts.consolestdout = bool(c)
 }
 
-// # 设置日志是否打印到控制台
+// WithConsole # 设置日志是否打印到控制台.
 func WithConsole(b bool) Options {
 	return consoleopt(b)
 }
@@ -43,7 +43,7 @@ func (f fileopt) apply(opts *options) {
 	opts.filestdout = bool(f)
 }
 
-// # 设置日志是否输出到文件
+// WithFile # 设置日志是否输出到文件.
 func WithFile(b bool) Options {
 	return fileopt(b)
 }
@@ -56,7 +56,7 @@ func (d divisionopt) apply(opts *options) {
 	opts.division = d.division
 }
 
-// # 设置日志切割模式,time:按时间切割, size:按大小切割
+// WithDivision # 设置日志切割模式,time:按时间切割, size:按大小切割.
 func WithDivision(d string) Options {
 	return divisionopt{division: d}
 }
@@ -69,7 +69,7 @@ func (p pathopt) apply(opts *options) {
 	opts.path = p.path
 }
 
-// # 设置日志输出路径
+// WithPath # 设置日志输出路径.
 func WithPath(p string) Options {
 	return pathopt{path: p}
 }
@@ -80,7 +80,7 @@ func (s sqllogopt) apply(opts *options) {
 	opts.sqllog = bool(s)
 }
 
-// # 设置日志是否打印sql执行日志,用于gorm日志中
-func WithSqlLog(b bool) Options {
+// WithSqlLog # 设置日志是否打印sql执行日志,用于gorm日志中.
+func WithSQLLog(b bool) Options {
 	return sqllogopt(b)
 }

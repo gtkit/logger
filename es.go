@@ -7,6 +7,11 @@ type Eslogger struct {
 func EsLogger() *Eslogger {
 	return &Eslogger{}
 }
+
+func Es() *Eslogger {
+	return &Eslogger{}
+}
+
 func (l Eslogger) Printf(format string, v ...interface{}) {
-	Infof("[--ES] "+format, v...)
+	Infof("[* ES] "+format, v...)
 }

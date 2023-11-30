@@ -6,10 +6,16 @@ import (
 	"time"
 )
 
+const LenTime = 2
+
 type Cronlog struct {
 }
 
 func CronLog() *Cronlog {
+	return &Cronlog{}
+}
+
+func Cron() *Cronlog {
 	return &Cronlog{}
 }
 
@@ -19,7 +25,10 @@ func (t *Cronlog) Info(msg string, keysAndValues ...any) {
 }
 func (t *Cronlog) Error(err error, msg string, keysAndValues ...any) {
 	keysAndValues = formatTimes(keysAndValues)
-	Infof(formatString("[*定时任务 ERROR]", len(keysAndValues)+2), append([]any{msg, "error", err}, keysAndValues...)...)
+	Infof(
+		formatString("[* 定时任务 ERROR]", len(keysAndValues)+LenTime),
+		append([]any{msg, "error", err}, keysAndValues...)...,
+	)
 }
 
 // formatString returns a logfmt-like format string for the number of

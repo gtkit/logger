@@ -11,6 +11,20 @@ import (
 	"go.uber.org/zap/zapcore"
 )
 
+const (
+	TimeDivision = "time"
+	SizeDivision = "size"
+	DayHour      = 24
+	WeekDay      = 7
+	MaxSize      = 512
+	MaxAge       = 30
+	MaxBackups   = 300
+)
+
+type ZapOptionInterface interface {
+	NewZap()
+}
+
 type Option struct {
 	Level         string // 日志级别
 	ConsoleStdout bool   // 日志是否输出到控制台
@@ -23,33 +37,35 @@ type Option struct {
 var (
 	zlog       *zap.Logger
 	zlogoption *Option
+	levelMap   = map[string]zapcore.Level{
+		"debug":  zapcore.DebugLevel,
+		"info":   zapcore.InfoLevel,
+		"warn":   zapcore.WarnLevel,
+		"error":  zapcore.ErrorLevel,
+		"dpanic": zapcore.DPanicLevel,
+		"panic":  zapcore.PanicLevel,
+		"fatal":  zapcore.FatalLevel,
+	}
 )
 
-const (
-	TimeDivision = "time"
-	SizeDivision = "size"
-)
-
-var levelMap = map[string]zapcore.Level{
-	"debug":  zapcore.DebugLevel,
-	"info":   zapcore.InfoLevel,
-	"warn":   zapcore.WarnLevel,
-	"error":  zapcore.ErrorLevel,
-	"dpanic": zapcore.DPanicLevel,
-	"panic":  zapcore.PanicLevel,
-	"fatal":  zapcore.FatalLevel,
+// NewZap 实例化zap.
+func NewZap(op ZapOptionInterface) {
+	op.NewZap()
 }
 
-// 实例化zap
-func NewZap(option *Option) {
-	zlogoption = option
-	if len(option.Path) == 0 {
-		zlogoption.Path = "./logs/"
-	}
+func (opt *Option) NewZap() {
+	optionSetter(opt)
 	initzap()
 }
 
-// 函数选项模式实例化zap
+func optionSetter(opt *Option) {
+	zlogoption = opt
+	if len(opt.Path) == 0 {
+		zlogoption.Path = "./logs/"
+	}
+}
+
+// NewZapWithOptions 函数选项模式实例化zap.
 func NewZapWithOptions(opts ...Options) {
 	var op options
 	for _, o := range opts {
@@ -108,10 +124,14 @@ func initzap() {
 		zap.AddCallerSkip(1),              // AddCallerSkip 显示调用打印日志的是哪一行的 code 行数
 		zap.AddStacktrace(zap.ErrorLevel), // Error 时才会显示 stacktrace
 	)
-	defer zlog.Sync()
 
 	zap.ReplaceGlobals(zlog) // ReplaceGlobals来将全局的 logger 替换为我们通过配置定制的 logger
+}
 
+func Sync() {
+	if err := zlog.Sync(); err != nil {
+		Info("logger sync error: ", err)
+	}
 }
 
 func getLoggerLevel(lvl string) zapcore.Level {
@@ -139,9 +159,9 @@ func getFileSizeConfig() zapcore.WriteSyncer {
 	logname := time.Now().Format("2006-01-02.log")
 	lumberJackLogger := &lumberjack.Logger{
 		Filename:   zlogoption.Path + logname, // 日志文件路径
-		MaxSize:    128,                       // 日志文件大小,单个文件最大尺寸，默认单位 M
-		MaxAge:     30,                        // 最长保存天数
-		MaxBackups: 300,                       // 最多备份几个
+		MaxSize:    MaxSize,                   // 日志文件大小,单个文件最大尺寸，默认单位 M
+		MaxAge:     MaxAge,                    // 最长保存天数
+		MaxBackups: MaxBackups,                // 最多备份几个
 		Compress:   true,                      // 是否压缩文件，使用gzip
 		LocalTime:  true,                      // 使用本地时间
 	}
@@ -155,8 +175,8 @@ func getFileTimeConfig() zapcore.WriteSyncer {
 	hook, err := rotatelogs.New(
 		zlogoption.Path+"%Y%m%d.log", // 没有使用go风格反人类的format格式
 		rotatelogs.WithLinkName(zlogoption.Path+"log.log"),
-		rotatelogs.WithMaxAge(time.Hour*24*7),
-		rotatelogs.WithRotationTime(time.Hour*24),
+		rotatelogs.WithMaxAge(time.Hour*DayHour*WeekDay),
+		rotatelogs.WithRotationTime(time.Hour*DayHour),
 	)
 	if err != nil {
 		panic(err)
