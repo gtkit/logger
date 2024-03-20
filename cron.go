@@ -8,6 +8,13 @@ import (
 
 const LenTime = 2
 
+var _ ICronLogger = (*Cronlog)(nil)
+
+type ICronLogger interface {
+	Info(msg string, keysAndValues ...any)
+	Error(err error, msg string, keysAndValues ...any)
+}
+
 type Cronlog struct {
 }
 

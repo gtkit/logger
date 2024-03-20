@@ -1,35 +1,20 @@
-// @Author xiaozhaofu 2022/12/22 17:20:00
 package logger
 
-type options struct {
-	level         string // 日志级别
-	consolestdout bool   // 日志是否输出到控制台
-	filestdout    bool   // 日志是否输出到文件
-	division      string // 日志切割方式, time:日期, size:大小, 默认按照大小分割
-	path          string // 日志文件路径
-	sqllog        bool   // 是否打印 sql 执行日志
-}
+import (
+	"strings"
+)
+
 type Options interface {
-	apply(*options)
+	apply(*logConfig)
 }
 
-type levelopt struct {
-	level string
-}
-
-func (l levelopt) apply(opts *options) {
-	opts.level = l.level
-}
-
-// WithLevel #设置日志级别.
-func WithLevel(l string) Options {
-	return levelopt{level: l}
-}
-
+/**
+ * consoleopt.
+ */
 type consoleopt bool
 
-func (c consoleopt) apply(opts *options) {
-	opts.consolestdout = bool(c)
+func (c consoleopt) apply(opts *logConfig) {
+	opts.consoleStdout = bool(c)
 }
 
 // WithConsole # 设置日志是否打印到控制台.
@@ -37,10 +22,13 @@ func WithConsole(b bool) Options {
 	return consoleopt(b)
 }
 
+/**
+ * fileopt.
+ */
 type fileopt bool
 
-func (f fileopt) apply(opts *options) {
-	opts.filestdout = bool(f)
+func (f fileopt) apply(opts *logConfig) {
+	opts.fileStdout = bool(f)
 }
 
 // WithFile # 设置日志是否输出到文件.
@@ -48,11 +36,14 @@ func WithFile(b bool) Options {
 	return fileopt(b)
 }
 
+/**
+ * divisionopt.
+ */
 type divisionopt struct {
 	division string
 }
 
-func (d divisionopt) apply(opts *options) {
+func (d divisionopt) apply(opts *logConfig) {
 	opts.division = d.division
 }
 
@@ -61,26 +52,66 @@ func WithDivision(d string) Options {
 	return divisionopt{division: d}
 }
 
+/**
+ * pathopt.
+ */
 type pathopt struct {
 	path string
 }
 
-func (p pathopt) apply(opts *options) {
+func (p pathopt) apply(opts *logConfig) {
 	opts.path = p.path
 }
 
 // WithPath # 设置日志输出路径.
 func WithPath(p string) Options {
-	return pathopt{path: p}
+	path := strings.TrimRight(p, "/")
+	return pathopt{path: path}
 }
 
-type sqllogopt bool
-
-func (s sqllogopt) apply(opts *options) {
-	opts.sqllog = bool(s)
+/**
+ * maxsizeopt.
+ */
+type maxsizeopt struct {
+	size int
 }
 
-// WithSqlLog # 设置日志是否打印sql执行日志,用于gorm日志中.
-func WithSQLLog(b bool) Options {
-	return sqllogopt(b)
+func (s maxsizeopt) apply(opts *logConfig) {
+	opts.maxSize = s.size
+}
+
+func WithMaxSize(s int) Options {
+	return maxsizeopt{size: s}
+}
+
+/**
+ * maxageopt.
+ */
+type maxageopt struct {
+	age int
+}
+
+func (a maxageopt) apply(opts *logConfig) {
+	opts.maxAge = a.age
+}
+
+// WithMaxAge # 设置日志文件最大保存时间,单位:天.
+func WithMaxAge(a int) Options {
+	return maxageopt{age: a}
+}
+
+/**
+ * maxbackupsopt.
+ */
+type maxbackupsopt struct {
+	backups int
+}
+
+func (b maxbackupsopt) apply(opts *logConfig) {
+	opts.maxBackups = b.backups
+}
+
+// WithMaxBackups # 设置日志文件最大保存数量.
+func WithMaxBackups(b int) Options {
+	return maxbackupsopt{backups: b}
 }

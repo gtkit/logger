@@ -5,11 +5,6 @@ import (
 	"go.uber.org/zap"
 )
 
-// Sql 是否打印 sql 执行日志.
-func Sql() bool {
-	return zlogoption.SqlLog
-}
-
 // Zlog 获取 zap.Logger.
 func Zlog() *zap.Logger {
 	return zlog

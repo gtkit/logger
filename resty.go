@@ -1,6 +1,13 @@
 // @Author 2023/11/20 17:49:00
 package logger
 
+var _ IRestyLogger = (*Restylogger)(nil)
+
+type IRestyLogger interface {
+	Errorf(format string, v ...interface{})
+	Warnf(format string, v ...interface{})
+	Debugf(format string, v ...interface{})
+}
 type Restylogger struct {
 }
 
