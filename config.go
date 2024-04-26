@@ -39,6 +39,7 @@ type logConfig struct {
 var (
 	zlog   *zap.Logger
 	config *logConfig
+	undo   func()
 )
 
 // NewZap 函数选项模式实例化zap.
@@ -134,15 +135,21 @@ func initzap() {
 		// 	entry.Message = "[" + entry.Level.String() + "] " + entry.Message
 		// 	return nil
 		// }),
+
 	)
 
-	zap.ReplaceGlobals(zlog) // ReplaceGlobals来将全局的 logger 替换为我们通过配置定制的 logger
+	undo = zap.ReplaceGlobals(zlog) // ReplaceGlobals来将全局的 logger 替换为我们通过配置定制的 logger
 }
 
 func Sync() {
+	undo()
 	if err := zlog.Sync(); err != nil {
 		Info("logger sync error: ", err)
 	}
+}
+
+func UnDo() {
+	undo()
 }
 
 func getFileConfig(level string) zapcore.WriteSyncer {
