@@ -1,6 +1,7 @@
 package logger_test
 
 import (
+	"strings"
 	"testing"
 
 	"go.uber.org/zap"
@@ -34,4 +35,10 @@ func TestLog(t *testing.T) {
 		zap.Bool("married", true),
 		zap.String("address", "New York"),
 	)
+}
+
+func TestPath(t *testing.T) {
+	path := "./logs/"
+	l := strings.Count(path, "/")
+	t.Log("path:", l)
 }

@@ -22,7 +22,7 @@ func Red(msg string) {
 }
 
 // Redf ...
-func Redf(msg string, arg interface{}) {
+func Redf(msg string, arg any) {
 	Infof("\x1b[31m%s\x1b[0m %+v\n", msg, arg)
 }
 
@@ -37,6 +37,6 @@ func Green(msg string) {
 }
 
 // Greenf ...
-func Greenf(msg string, arg interface{}) {
+func Greenf(msg string, arg any) {
 	Infof("\x1b[32m%s\x1b[0m %+v\n", msg, arg)
 }

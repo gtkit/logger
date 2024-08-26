@@ -65,23 +65,25 @@ func (p pathopt) apply(opts *logConfig) {
 
 // WithPath # 设置日志输出路径.
 func WithPath(p string) Options {
-	path := strings.TrimRight(p, "/")
-	return pathopt{path: path}
+	if strings.HasSuffix(p, "/") {
+		return pathopt{path: p + "logger"}
+	}
+	return pathopt{path: p}
+
 }
 
 /**
- * maxsizeopt.
+ * compressopt.
  */
-type maxsizeopt struct {
-	size int
+type compressopt struct {
+	compress bool
 }
 
-func (s maxsizeopt) apply(opts *logConfig) {
-	opts.maxSize = s.size
+func (c compressopt) apply(opts *logConfig) {
+	opts.compress = c.compress
 }
-
-func WithMaxSize(s int) Options {
-	return maxsizeopt{size: s}
+func WithCompress(c bool) Options {
+	return compressopt{compress: c}
 }
 
 /**
@@ -114,4 +116,37 @@ func (b maxbackupsopt) apply(opts *logConfig) {
 // WithMaxBackups # 设置日志文件最大保存数量.
 func WithMaxBackups(b int) Options {
 	return maxbackupsopt{backups: b}
+}
+
+/**
+ * maxsizeopt.
+ */
+type maxsizeopt struct {
+	size int
+}
+
+func (s maxsizeopt) apply(opts *logConfig) {
+	opts.maxSize = s.size
+}
+
+func WithMaxSize(s int) Options {
+	return maxsizeopt{size: s}
+}
+
+/**
+ * levelopt.
+ * 日志级别: debug,info,warn,error,dpanic,panic,fatal.
+ */
+type levelopt struct {
+	level string
+}
+
+func (l levelopt) apply(opts *logConfig) {
+	opts.level = l.level
+}
+
+// WithLevel # 设置日志输出级别.
+// 日志级别: debug,info,warn,error,dpanic,panic,fatal.
+func WithLevel(l string) Options {
+	return levelopt{level: l}
 }

@@ -11,13 +11,8 @@ func Zlog() *zap.Logger {
 }
 
 // NewLog 获取 zap.Logger.
-func NewLog() *zap.Logger {
+func ZapLog() *zap.Logger {
 	return zlog
-}
-
-// NewSugar 获取 zap.SugaredLogger.
-func NewSugar() *zap.SugaredLogger {
-	return zlog.Sugar()
 }
 
 // Sugar 获取 zap.SugaredLogger.
@@ -26,17 +21,17 @@ func Sugar() *zap.SugaredLogger {
 }
 
 // Debug 记录 debug 等级的日志.
-func Debug(args ...interface{}) {
+func Debug(args ...any) {
 	zlog.Sugar().Debug(args...)
 }
 
 // Debugf 记录 debug 等级的日志.
-func Debugf(format string, args ...interface{}) {
+func Debugf(format string, args ...any) {
 	zlog.Sugar().Debugf(format, args...)
 }
 
 // Info 记录 info 等级的日志.
-func Info(args ...interface{}) {
+func Info(args ...any) {
 	zlog.Sugar().Info(args...)
 }
 
@@ -46,12 +41,12 @@ func ZInfo(msg string, fields ...zap.Field) {
 }
 
 // Infof 记录 info 等级的日志.
-func Infof(format string, args ...interface{}) {
+func Infof(format string, args ...any) {
 	zlog.Sugar().Infof(format, args...)
 }
 
 // Warn 记录 warn 等级的日志.
-func Warn(args ...interface{}) {
+func Warn(args ...any) {
 	zlog.Sugar().Warn(args...)
 }
 
@@ -61,12 +56,12 @@ func ZWarn(moduleName string, fields ...zap.Field) {
 }
 
 // Warnf 记录 warn 等级的日志.
-func Warnf(format string, args ...interface{}) {
+func Warnf(format string, args ...any) {
 	zlog.Sugar().Warnf(format, args...)
 }
 
 // Error 记录 error 等级的日志.
-func Error(args ...interface{}) {
+func Error(args ...any) {
 	zlog.Sugar().Error(args...)
 }
 
@@ -76,31 +71,31 @@ func ZError(moduleName string, fields ...zap.Field) {
 }
 
 // Errorf 记录 error 等级的日志.
-func Errorf(format string, args ...interface{}) {
+func Errorf(format string, args ...any) {
 	zlog.Sugar().Errorf(format, args...)
 }
 
 // DPanic 记录 dpanic 等级的日志.
-func DPanic(args ...interface{}) {
+func DPanic(args ...any) {
 	zlog.Sugar().DPanic(args...)
 }
 
 // DPanicf 记录 dpanic 等级的日志.
-func DPanicf(format string, args ...interface{}) {
+func DPanicf(format string, args ...any) {
 	zlog.Sugar().DPanicf(format, args...)
 }
 
-func Panic(args ...interface{}) {
+func Panic(args ...any) {
 	zlog.Sugar().Panic(args...)
 }
 
 // Panic 级别同 Error(), 写完 log 后调用 os.Exit(1) 退出程序.
-func Panicf(format string, args ...interface{}) {
+func Panicf(format string, args ...any) {
 	zlog.Sugar().Panicf(format, args...)
 }
 
 // Fatal 级别同 Error(), 写完 log 后调用 os.Exit(1) 退出程序.
-func Fatal(args ...interface{}) {
+func Fatal(args ...any) {
 	zlog.Sugar().Fatal(args...)
 }
 
@@ -109,11 +104,11 @@ func ZFatal(moduleName string, fields ...zap.Field) {
 	zlog.Fatal(moduleName, fields...)
 }
 
-func Fatalf(format string, args ...interface{}) {
+func Fatalf(format string, args ...any) {
 	zlog.Sugar().Fatalf(format, args...)
 }
 
-func Infow(msg string, keysAndValues ...interface{}) {
+func Infow(msg string, keysAndValues ...any) {
 	zlog.Sugar().Infow(msg, keysAndValues...)
 }
 
