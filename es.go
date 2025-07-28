@@ -4,10 +4,9 @@ package logger
 var _ IEsLogger = (*Eslogger)(nil)
 
 type IEsLogger interface {
-	Printf(format string, v ...interface{})
+	Printf(format string, v ...any)
 }
-type Eslogger struct {
-}
+type Eslogger struct{}
 
 func EsLogger() *Eslogger {
 	return &Eslogger{}
@@ -17,6 +16,6 @@ func Es() *Eslogger {
 	return &Eslogger{}
 }
 
-func (l Eslogger) Printf(format string, v ...interface{}) {
+func (l Eslogger) Printf(format string, v ...any) {
 	Infof("[* ES] "+format, v...)
 }

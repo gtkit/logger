@@ -15,8 +15,7 @@ type ICronLogger interface {
 	Error(err error, msg string, keysAndValues ...any)
 }
 
-type Cronlog struct {
-}
+type Cronlog struct{}
 
 func CronLog() *Cronlog {
 	return &Cronlog{}
@@ -30,6 +29,7 @@ func (t *Cronlog) Info(msg string, keysAndValues ...any) {
 	keysAndValues = formatTimes(keysAndValues)
 	Infof(formatString("[* 定时任务 INFO]", len(keysAndValues)), append([]any{msg}, keysAndValues...)...)
 }
+
 func (t *Cronlog) Error(err error, msg string, keysAndValues ...any) {
 	keysAndValues = formatTimes(keysAndValues)
 	Infof(
@@ -42,27 +42,35 @@ func (t *Cronlog) Error(err error, msg string, keysAndValues ...any) {
 // key/values.
 func formatString(prefix string, numKeysAndValues int) string {
 	var sb strings.Builder
+
 	sb.WriteString(prefix)
 	sb.WriteString(": %s")
+
 	if numKeysAndValues > 0 {
 		sb.WriteString(", ")
 	}
-	for i := 0; i < numKeysAndValues/2; i++ {
+
+	for i := range numKeysAndValues / 2 {
 		if i > 0 {
 			sb.WriteString(", ")
 		}
+
 		sb.WriteString("%v=%v")
 	}
+
 	return sb.String()
 }
 
 func formatTimes(keysAndValues []any) []any {
 	var formattedArgs []any
+
 	for _, arg := range keysAndValues {
 		if t, ok := arg.(time.Time); ok {
 			arg = t.Format(time.DateTime)
 		}
+
 		formattedArgs = append(formattedArgs, arg)
 	}
+
 	return formattedArgs
 }

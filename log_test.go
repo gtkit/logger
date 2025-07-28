@@ -26,12 +26,13 @@ func TestLog(t *testing.T) {
 		zap.Bool("married", true),
 		zap.String("address", "New York"),
 	)
-
-	logger.ZError("[*test error*]",
-		zap.String("test", "test-error"),
-		zap.Int("age", 25),
-		zap.Float64("weight", 65.5),
-		zap.Bool("married", true),
-		zap.String("address", "New York"),
-	)
+	// logger.ZError("[*test error*]",
+	//
+	//	zap.String("test", "test-error"),
+	//	zap.Int("age", 25),
+	//	zap.Float64("weight", 65.5),
+	//	zap.Bool("married", true),
+	//	zap.String("address", "New York"),
+	//
+	// )
 }

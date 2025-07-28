@@ -1,15 +1,15 @@
-// @Author xiaozhaofu 2023/6/30 20:16:00
 package logger
 
 import (
 	"os"
-	"strings"
 	"time"
 
-	rotatelogs "github.com/lestrrat-go/file-rotatelogs"
+	"github.com/gtkit/stringx"
 	"github.com/natefinch/lumberjack"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+
+	rotatelogs "github.com/lestrrat-go/file-rotatelogs"
 )
 
 const (
@@ -34,12 +34,23 @@ type logConfig struct {
 	maxAge        int    // 日志文件最大保存时间,单位天
 	maxBackups    int    // 日志文件最大备份数
 	maxSize       int    // 日志文件最大大小,单位M
+	level         string // 日志级别
+	newser        Newser
 }
 
 var (
-	zlog   *zap.Logger
-	config *logConfig
-	undo   func()
+	zlog     *zap.Logger
+	config   *logConfig
+	undo     func()
+	levelMap = map[string]zapcore.Level{
+		"debug":  zapcore.DebugLevel,
+		"info":   zapcore.InfoLevel,
+		"warn":   zapcore.WarnLevel,
+		"error":  zapcore.ErrorLevel,
+		"dpanic": zapcore.DPanicLevel,
+		"panic":  zapcore.PanicLevel,
+		"fatal":  zapcore.FatalLevel,
+	}
 )
 
 // NewZap 函数选项模式实例化zap.
@@ -53,29 +64,30 @@ func NewZap(opts ...Options) {
 		maxAge:        DefaultMaxAge,
 		maxBackups:    DefaultMaxBackups,
 		maxSize:       DefaultMaxSize,
+		level:         "info",
 	}
 	for _, o := range opts {
-		o.apply(config)
+		if err := o.apply(config); err != nil {
+			panic(err)
+		}
 	}
-	// fmt.Printf("logConfig:%+v\n", logConfig)
+	newser = config.newser
+
 	initzap()
 }
 
 func initzap() {
-	var (
-		syncInfoWriters  []zapcore.WriteSyncer
-		syncErrorWriters []zapcore.WriteSyncer
-	)
-	// level := getLoggerLevel(logConfig.Level)
+	var syncInfoWriters []zapcore.WriteSyncer
 
-	infoPath := getFileConfig("info")   // 获取日志写入的路径
-	errorPath := getFileConfig("error") // 获取错误日志写入的路径
-	encoder := getEncoder()             // 编码配置
+	level := getLoggerLevel(config.level)
+
+	levelPath := getFileConfig(config.level) // 获取日志写入的路径
+
+	encoder := getEncoder() // 编码配置
 
 	// 控制台打印, info, error日志同时输出
 	if config.consoleStdout {
 		syncInfoWriters = append(syncInfoWriters, zapcore.AddSync(os.Stdout))
-		syncErrorWriters = append(syncErrorWriters, zapcore.AddSync(os.Stdout))
 	}
 	/**
 		原生打印到文件
@@ -85,12 +97,8 @@ func initzap() {
 	if config.fileStdout {
 		syncInfoWriters = append(
 			syncInfoWriters,
-			zapcore.AddSync(infoPath), // 打印到 info 文件
+			zapcore.AddSync(levelPath), // 打印到 levelPath 文件
 			// ori_writeSyncer,
-		)
-		syncErrorWriters = append(
-			syncErrorWriters,
-			zapcore.AddSync(errorPath), // 打印到 error 文件
 		)
 	}
 
@@ -98,18 +106,10 @@ func initzap() {
 	infoCore := zapcore.NewCore(
 		encoder,
 		zapcore.NewMultiWriteSyncer(syncInfoWriters...),
-		zap.LevelEnablerFunc(func(lvl zapcore.Level) bool {
-			return lvl < zapcore.WarnLevel
-		}),
-	)
-	// 错误日志级别为 Error
-	// warnlevel及以上归到warn日志
-	errorCore := zapcore.NewCore(
-		encoder,
-		zapcore.NewMultiWriteSyncer(syncErrorWriters...),
-		zap.LevelEnablerFunc(func(lvl zapcore.Level) bool {
-			return lvl >= zapcore.WarnLevel
-		}),
+		zap.NewAtomicLevelAt(level),
+		// zap.LevelEnablerFunc(func(lvl zapcore.Level) bool {
+		// 	return lvl < zapcore.WarnLevel
+		// }),
 	)
 
 	/**
@@ -127,7 +127,7 @@ func initzap() {
 	 *  WithClock(clock zapcore.Clock): 指定日志记录器用来确定当前时间的 zapcore.Clock 对象，默认为 time.Now 的系统时钟。
 	 */
 	zlog = zap.New(
-		zapcore.NewTee(infoCore, errorCore),
+		infoCore,
 		zap.AddCaller(),                   // zap.AddCaller 打印日志的代码所在的位置信息
 		zap.AddCallerSkip(1),              // AddCallerSkip 显示调用打印日志的是哪一行的 code 行数
 		zap.AddStacktrace(zap.ErrorLevel), // Error 时才会显示 stacktrace
@@ -139,6 +139,14 @@ func initzap() {
 	)
 
 	undo = zap.ReplaceGlobals(zlog) // ReplaceGlobals来将全局的 logger 替换为我们通过配置定制的 logger
+}
+
+func getLoggerLevel(lvl string) zapcore.Level {
+	if level, ok := levelMap[lvl]; ok {
+		return level
+	}
+
+	return zapcore.InfoLevel
 }
 
 func Sync() {
@@ -168,20 +176,23 @@ func getFileConfig(level string) zapcore.WriteSyncer {
 
 func getFileSizeConfig(level string) zapcore.WriteSyncer {
 	logname := time.Now().Format("2006-01-02.log")
-	var builder strings.Builder
-	builder.WriteString(config.path)
-	builder.WriteString("/")
-	builder.WriteString(level)
-	builder.WriteString("_")
-	builder.WriteString(logname)
+	logpath := stringx.BuilderJoin([]string{
+		config.path,
+		"-",
+		level,
+		"-",
+		logname,
+	})
+
 	lumberJackLogger := &lumberjack.Logger{
-		Filename:   builder.String(),  // 日志文件路径
+		Filename:   logpath,           // 日志文件路径
 		MaxSize:    MaxSize,           // 日志文件大小,单个文件最大尺寸，默认单位 M
 		MaxAge:     config.maxAge,     // 最长保存天数
 		MaxBackups: config.maxBackups, // 最多备份几个
 		Compress:   config.compress,   // 是否压缩文件，使用gzip
 		LocalTime:  true,              // 使用本地时间
 	}
+
 	return zapcore.AddSync(lumberJackLogger)
 }
 
@@ -189,13 +200,15 @@ func getFileDailyConfig(level string) zapcore.WriteSyncer {
 	// 生成rotatelogs的Logger 实际生成的文件名 demo.log.YYmmddHH
 	// demo.log是指向最新日志的链接
 	// 保存7天内的日志，每1小时(整点)分割一次日志
-	var builder strings.Builder
-	builder.WriteString(config.path)
-	builder.WriteString("/")
-	builder.WriteString(level)
-	builder.WriteString("_%Y-%m-%d.log")
+	logpath := stringx.BuilderJoin([]string{
+		config.path,
+		level,
+		"-",
+		"-%Y-%m-%d.log",
+	})
+
 	hook, err := rotatelogs.New(
-		builder.String(), // 没有使用go风格反人类的format格式
+		logpath, // 没有使用go风格反人类的format格式
 		// 为最新的日志建立软连接，指向最新日志文件
 		rotatelogs.WithLinkName(config.path+level+".log"),
 		// 清理条件： 将已切割的日志文件按条件(数量or时间)直接删除
@@ -209,7 +222,6 @@ func getFileDailyConfig(level string) zapcore.WriteSyncer {
 		rotatelogs.WithRotationTime(time.Hour*DayHour),
 		// rotatelogs.WithRotationSize(), // 按文件大小切割日志,单位为 bytes
 	)
-
 	if err != nil {
 		panic(err)
 	}
