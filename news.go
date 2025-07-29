@@ -7,8 +7,10 @@ import (
 var newser Newser
 
 type Newser interface {
-	Text(args ...any)
-	TextF(template string, args ...any)
+	Hook(args ...any)
+	HookF(template string, args ...any)
+	HookWithURL(url string, args ...any)
+	HookWithURLF(url, template string, args ...any)
 }
 
 // Message format with Sprint, Sprintf, or neither.

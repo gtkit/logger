@@ -137,40 +137,80 @@ func LogInfoIf(err error) {
 
 // NInfo 记录 info 等级的日志.
 // 发送消息.
-func NInfo(args ...any) {
+func HInfo(args ...any) {
 	zlog.Sugar().Info(args...)
 
 	if newser != nil {
-		newser.Text(args...)
+		newser.Hook(args...)
 	}
 }
 
-// NInfof 错误日志.
+// HInfof 记录 info 等级的模板日志.
 // 发送消息.
-func NInfof(format string, args ...any) {
+func HInfof(format string, args ...any) {
 	zlog.Sugar().Infof(format, args...)
 
 	if newser != nil {
-		newser.TextF(format, args...)
+		newser.HookF(format, args...)
 	}
 }
 
-// NError 错误日志.
+// HInfoWithUrl 记录 info 日志.
+// 发送消息到指定 url.
+func HInfoWithUrl(url string, args ...any) {
+	zlog.Sugar().Info(args...)
+
+	if newser != nil {
+		newser.HookWithURL(url, args...)
+	}
+}
+
+// HInfoHookWithUrlf 记录 info 等级的模板日志.
+// 发送消息到指定 url.
+func HInfoHookWithUrlf(url string, format string, args ...any) {
+	zlog.Sugar().Infof(format, args...)
+
+	if newser != nil {
+		newser.HookWithURLF(url, format, args...)
+	}
+}
+
+// HError 记录 error 等级的日志.
 // 发送消息.
-func NError(args ...any) {
+func HError(args ...any) {
 	zlog.Sugar().Error(args...)
 
 	if newser != nil {
-		newser.Text(args...)
+		newser.Hook(args...)
 	}
 }
 
-// NErrorf 错误日志.
+// HErrorf 记录 error 等级的模板日志.
 // 发送消息.
-func NErrorf(format string, args ...any) {
+func HErrorf(format string, args ...any) {
 	zlog.Sugar().Errorf(format, args...)
 
 	if newser != nil {
-		newser.TextF(format, args...)
+		newser.HookF(format, args...)
+	}
+}
+
+// HErrorWithUrl 记录 error 日志.
+// 发送消息到指定 url.
+func HErrorWithUrl(url string, args ...any) {
+	zlog.Sugar().Error(args...)
+
+	if newser != nil {
+		newser.HookWithURL(url, args...)
+	}
+}
+
+// HErrorWithUrlf 记录 error 等级的模板日志.
+// 发送消息到指定 url.
+func HErrorWithUrlf(url, format string, args ...any) {
+	zlog.Sugar().Errorf(format, args...)
+
+	if newser != nil {
+		newser.HookWithURLF(url, format, args...)
 	}
 }
