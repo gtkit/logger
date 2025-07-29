@@ -167,7 +167,7 @@ func HInfoWithUrl(url string, args ...any) {
 
 // HInfoHookWithUrlf 记录 info 等级的模板日志.
 // 发送消息到指定 url.
-func HInfoHookWithUrlf(url string, format string, args ...any) {
+func HInfoWithUrlf(url string, format string, args ...any) {
 	zlog.Sugar().Infof(format, args...)
 
 	if newser != nil {
