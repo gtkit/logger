@@ -11,6 +11,10 @@ func Zap() *zap.Logger {
 	return zaplog
 }
 
+func Zlog() *zap.Logger {
+	return zaplog
+}
+
 // Sugar 返回底层 *zap.SugaredLogger.
 func Sugar() *zap.SugaredLogger {
 	return sugar
@@ -31,6 +35,10 @@ func Info(msg string, fields ...zap.Field) {
 	zaplog.Info(msg, fields...)
 }
 
+func ZInfo(msg string, fields ...zap.Field) {
+	zaplog.Info(msg, fields...)
+}
+
 // Warn 记录 warn 级别日志.
 func Warn(msg string, fields ...zap.Field) {
 	zaplog.Warn(msg, fields...)
@@ -38,6 +46,10 @@ func Warn(msg string, fields ...zap.Field) {
 
 // Error 记录 error 级别日志.
 func Error(msg string, fields ...zap.Field) {
+	zaplog.Error(msg, fields...)
+}
+
+func ZError(msg string, fields ...zap.Field) {
 	zaplog.Error(msg, fields...)
 }
 
