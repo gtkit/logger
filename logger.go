@@ -44,6 +44,10 @@ func Warn(msg string, fields ...zap.Field) {
 	zaplog.Warn(msg, fields...)
 }
 
+func ZWarn(msg string, fields ...zap.Field) {
+	zaplog.Warn(msg, fields...)
+}
+
 // Error 记录 error 级别日志.
 func Error(msg string, fields ...zap.Field) {
 	zaplog.Error(msg, fields...)

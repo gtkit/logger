@@ -1,0 +1,283 @@
+# golangci-lint v1.64.8 配置（v1 最终版本）
+# 适用于 Go 1.26+
+
+run:
+  timeout: 5m
+  tests: true
+  concurrency: 4
+
+output:
+  formats:
+    - format: colored-line-number
+  sort-results: true
+
+linters:
+  disable-all: true
+  enable:
+    # ── 基础必备（默认开启的 6 个）─────────────────────
+    - errcheck          # 未处理的 error 返回值
+    - gosimple          # 简化代码建议（staticcheck 系列）
+    - govet             # go vet 官方检查
+    - ineffassign       # 无效赋值
+    - staticcheck       # 最强静态分析器
+    - unused            # 未使用的代码
+
+    # ── 错误处理 ──────────────────────────────────────
+    - nilerr            # err != nil 却返回 nil error
+    - nilnesserr        # nilness 相关错误模式
+    - errname           # error 类型命名规范（ErrXxx / XxxError）
+    - wrapcheck         # 跨包 error 必须 wrap
+    - errchkjson        # json 编码函数的类型安全检查
+
+    # ── Bug 预防 ──────────────────────────────────────
+    - bodyclose         # HTTP response body 必须关闭
+    - contextcheck      # context 传播检查
+    - durationcheck     # time.Duration 乘法错误
+    - noctx             # HTTP 请求必须带 context
+    - sqlclosecheck     # sql.Rows/Stmt 必须关闭
+    - reassign          # 包级变量被重新赋值检查
+    - recvcheck         # receiver 类型一致性检查
+    - rowserrcheck      # sql Rows.Err 检查
+    - nosprintfhostport # Sprintf 构造 host:port 误用
+
+    # ── 代码风格 ──────────────────────────────────────
+    - gofmt             # 标准格式化
+    - goimports         # import 分组排序
+    - misspell          # 英文拼写检查
+    - unconvert         # 去除不必要的类型转换
+    - unparam           # 未使用的函数参数
+    - revive            # golint 替代品，规则丰富
+    - godot             # 导出符号注释以句号结尾
+    - whitespace        # 多余空行检查
+    - predeclared       # 遮蔽预定义标识符
+    - nolintlint        # nolint 指令格式检查
+    - stylecheck        # staticcheck 风格子集
+    - canonicalheader   # net/http.Header 规范化
+
+    # ── 性能 ──────────────────────────────────────────
+    - prealloc          # slice 预分配建议
+    - perfsprint        # fmt.Sprintf 可优化为 strconv 等
+
+    # ── 安全 ──────────────────────────────────────────
+    - gosec             # 安全漏洞检查
+
+    # ── 复杂度 ──────────────────────────────────────
+    - gocognit          # 认知复杂度
+    - cyclop            # 圈复杂度
+    - nestif            # 嵌套 if 深度
+
+    # ── 现代化（Go 1.22+ / 1.24+）────────────────────
+    - copyloopvar       # 循环变量拷贝检查（替代已废弃的 exportloopref）
+    - intrange          # for i := 0; i < n; i++ → for i := range n
+    - exptostd          # golang.org/x/exp → 标准库迁移
+    - fatcontext        # context 嵌套优化
+    - usestdlibvars     # 使用标准库常量（http.StatusOK 等）
+
+    # ── 测试 ──────────────────────────────────────────
+    - usetesting        # 替代已废弃的 tenv，检查 t.Setenv / t.Context 等
+    - tparallel         # t.Parallel() 使用规范
+
+    # ── 其他实用 ──────────────────────────────────────
+    - asasalint         # variadic func(...any) 误传 []any
+    - dupword           # 注释中重复单词
+    - gocritic          # 综合性代码审查
+    - nakedret          # 禁止长函数使用裸 return
+    - tagalign          # struct tag 对齐
+    - wastedassign      # 无用赋值检测
+    - gocheckcompilerdirectives # //go: 编译器指令有效性检查
+    - musttag           # (un)marshaled struct 必须有 tag
+    - mirror            # bytes/strings 镜像用法修正
+    - sloglint          # log/slog 风格一致性
+    - protogetter       # proto message 应使用 getter
+
+linters-settings:
+  errcheck:
+    check-type-assertions: true
+    check-blank: false
+
+  govet:
+    enable-all: true
+    disable:
+      - fieldalignment  # struct 字段对齐建议，手动控制
+
+  staticcheck:
+    checks:
+      - "all"
+
+  stylecheck:
+    checks:
+      - "all"
+      - "-ST1000"  # 包注释格式（按需开启）
+      - "-ST1003"  # 命名规范由 revive 处理
+
+  revive:
+    rules:
+      - name: blank-imports
+      - name: context-as-argument
+      - name: context-keys-type
+      - name: dot-imports
+      - name: error-return
+      - name: error-strings
+      - name: error-naming
+      - name: exported
+        arguments:
+          - "checkPrivateReceivers"
+      - name: if-return
+      - name: increment-decrement
+      - name: var-naming
+      - name: var-declaration
+      - name: range
+      - name: receiver-naming
+      - name: time-naming
+      - name: indent-error-flow
+      - name: errorf
+      - name: empty-block
+      - name: superfluous-else
+      - name: unused-parameter
+      - name: unreachable-code
+      - name: redefines-builtin-id
+
+  gocognit:
+    min-complexity: 25
+
+  cyclop:
+    max-complexity: 15
+    package-average: 5.0
+
+  nestif:
+    min-complexity: 5
+
+  gocritic:
+    enabled-tags:
+      - diagnostic
+      - style
+      - performance
+      - opinionated
+    disabled-checks:
+      - ifElseChain      # 与 revive indent-error-flow 重叠
+      - hugeParam        # 大 struct 传值有时是有意为之
+      - rangeValCopy     # Go 1.22+ 语义已变
+
+  nakedret:
+    max-func-lines: 20
+
+  gosec:
+    excludes:
+      - G104  # 未检查 error（已有 errcheck 覆盖）
+      - G304  # 文件路径由变量构造（太常见）
+
+  misspell:
+    locale: US
+
+  perfsprint:
+    int-conversion: true
+    err-error: true
+    errorf: true
+    sprintf1: true
+
+  godot:
+    scope: declarations
+
+  tagalign:
+    align: true
+    sort: true
+    order:
+      - json
+      - yaml
+      - xml
+      - toml
+      - mapstructure
+      - binding
+      - validate
+      - gorm
+      - db
+      - redis
+
+  usestdlibvars:
+    http-method: true
+    http-status-code: true
+    time-weekday: true
+    time-month: true
+    time-layout: true
+    crypto-hash: true
+    default-rpc-path: true
+
+  usetesting:
+    # 检查 os.Setenv → t.Setenv（替代已废弃的 tenv）
+    os-setenv: true
+    # 检查 os.TempDir → t.TempDir
+    os-temp-dir: true
+    # 检查 context.Background/TODO → t.Context()（Go 1.24+）
+    context-background: true
+    context-todo: true
+
+  sloglint:
+    kv-only: false
+    attr-only: false
+    key-naming-case: snake
+
+  nolintlint:
+    require-explanation: true
+    require-specific: true
+
+  wrapcheck:
+    ignoreSigs:
+      - ".Errorf("
+      - "errors.New("
+      - "errors.Unwrap("
+      - "errors.Join("
+      - ".Wrap("
+      - ".Wrapf("
+      - ".WithMessage("
+      - ".WithMessagef("
+      - ".WithStack("
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
+  exclude-rules:
+    # 测试文件放宽限制
+    - path: _test\.go
+      linters:
+        - gosec
+        - wrapcheck
+        - gocritic
+        - gocognit
+        - cyclop
+        - nestif
+        - errcheck
+        - dupword
+        - perfsprint
+        - unparam
+        - musttag
+
+    # generated 文件跳过全部
+    - path: ".*\\.gen\\.go"
+      linters:
+        - all
+
+    # mock 文件跳过全部
+    - path: "mock_.*\\.go"
+      linters:
+        - all
+
+    # protobuf 生成文件跳过
+    - path: ".*\\.pb\\.go"
+      linters:
+        - all
+
+    # cmd/ 入口放宽复杂度
+    - path: "cmd/.*/main\\.go"
+      linters:
+        - gocognit
+        - cyclop
+        - nestif
+
+    # 允许 cmd/ 中使用 fmt.Println
+    - path: "cmd/"
+      text: "fmt.Print"
+      linters:
+        - forbidigo
+
+  exclude-use-default: true
