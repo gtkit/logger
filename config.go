@@ -1,47 +1,30 @@
 package logger
 
 import (
+	"fmt"
+	"io"
 	"os"
-	"time"
 
-	"github.com/gtkit/stringx"
-	"github.com/natefinch/lumberjack"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
-
-	rotatelogs "github.com/lestrrat-go/file-rotatelogs"
+	"gopkg.in/natefinch/lumberjack.v2"
 )
 
 const (
-	DayHour = 24
-	WeekDay = 7
-	MaxSize = 512
-
-	DefaultPath       = "./logs/" // 默认保存目录
-	DefaultMaxSize    = 512       // 默认 512M
-	DefaultMaxAge     = 7         // 默认保存七天
-	DefaultMaxBackups = 50        // 默认5个备份
-	DefaultCompress   = true      // 默认压缩
-	DefaultConsole    = false
+	defaultPath       = "./logs/"
+	defaultMaxSize    = 512 // MB
+	defaultMaxAge     = 7  // 天
+	defaultMaxBackups = 50
 )
 
-type logConfig struct {
-	consoleStdout bool   // 日志是否输出到控制台
-	fileStdout    bool   // 日志是否输出到文件
-	division      string // 日志切割方式, time:日期, size:大小, 默认按照大小分割
-	path          string // 日志文件路径
-	compress      bool   // 是否压缩日志文件
-	maxAge        int    // 日志文件最大保存时间,单位天
-	maxBackups    int    // 日志文件最大备份数
-	maxSize       int    // 日志文件最大大小,单位M
-	level         string // 日志级别
-	newser        Newser
-}
-
+// 包级全局变量.
+// init() 中赋予安全默认值，NewZap() 中替换为正式配置.
 var (
-	zlog     *zap.Logger
-	config   *logConfig
-	undo     func()
+	zaplog  *zap.Logger
+	sugar   *zap.SugaredLogger
+	undofn  func()
+	closers []io.Closer
+
 	levelMap = map[string]zapcore.Level{
 		"debug":  zapcore.DebugLevel,
 		"info":   zapcore.InfoLevel,
@@ -53,92 +36,102 @@ var (
 	}
 )
 
-// NewZap 函数选项模式实例化zap.
-func NewZap(opts ...Options) {
-	config = &logConfig{
-		consoleStdout: DefaultConsole,
-		fileStdout:    true,
-		division:      "size",
-		path:          DefaultPath,
-		compress:      DefaultCompress,
-		maxAge:        DefaultMaxAge,
-		maxBackups:    DefaultMaxBackups,
-		maxSize:       DefaultMaxSize,
-		level:         "info",
-	}
-	for _, o := range opts {
-		if err := o.apply(config); err != nil {
-			panic(err)
-		}
-	}
-	newser = config.newser
+func init() {
+	// 安全默认值：未调用 NewZap 时输出到 stderr，不会 nil panic.
+	var err error
 
-	initzap()
+	zaplog, err = zap.NewDevelopment(zap.AddCallerSkip(1))
+	if err != nil {
+		zaplog = zap.NewNop()
+	}
+
+	sugar = zaplog.Sugar()
 }
 
-func initzap() {
-	var syncInfoWriters []zapcore.WriteSyncer
+type logConfig struct {
+	consoleStdout bool   // 是否输出到控制台
+	fileStdout    bool   // 是否输出到文件
+	outJSON       bool   // 是否输出为 JSON 格式
+	division      string // 切割方式: "size" 或 "daily"
+	path          string // 日志文件路径前缀
+	compress      bool   // 是否压缩归档文件
+	maxAge        int    // 最大保存天数
+	maxBackups    int    // 最大备份数量
+	maxSize       int    // 单文件最大大小 (MB)
+	level         string // 日志级别
+	messager      Messager
+}
 
-	level := getLoggerLevel(config.level)
-
-	levelPath := getFileConfig(config.level) // 获取日志写入的路径
-
-	encoder := getEncoder() // 编码配置
-
-	// 控制台打印, info, error日志同时输出
-	if config.consoleStdout {
-		syncInfoWriters = append(syncInfoWriters, zapcore.AddSync(os.Stdout))
+// NewZap 函数选项模式初始化全局 logger.
+// 可重复调用，会自动清理上一次初始化的资源.
+func NewZap(opts ...Option) {
+	cfg := &logConfig{
+		consoleStdout: false,
+		fileStdout:    true,
+		outJSON:       false,
+		division:      "size",
+		path:          defaultPath,
+		compress:      true,
+		maxAge:        defaultMaxAge,
+		maxBackups:    defaultMaxBackups,
+		maxSize:       defaultMaxSize,
+		level:         "info",
 	}
-	/**
-		原生打印到文件
-		file, _ := os.Create("./test.log")
-	    ori_writeSyncer := zapcore.AddSync(file)
-	*/
-	if config.fileStdout {
-		syncInfoWriters = append(
-			syncInfoWriters,
-			zapcore.AddSync(levelPath), // 打印到 levelPath 文件
-			// ori_writeSyncer,
-		)
+
+	for _, o := range opts {
+		if err := o(cfg); err != nil {
+			panic(fmt.Sprintf("logger: apply option: %v", err))
+		}
 	}
 
-	// 日志级别为 Info
-	infoCore := zapcore.NewCore(
+	msgr = cfg.messager
+
+	initZap(cfg)
+}
+
+func initZap(cfg *logConfig) {
+	// 清理上一次初始化的资源，防止重复调用 NewZap 导致泄漏.
+	for _, c := range closers {
+		_ = c.Close()
+	}
+
+	closers = closers[:0]
+
+	level := getLoggerLevel(cfg.level)
+	encoder := buildEncoder(cfg.outJSON)
+
+	var writers []zapcore.WriteSyncer
+
+	if cfg.consoleStdout {
+		writers = append(writers, zapcore.Lock(os.Stdout))
+	}
+
+	if cfg.fileStdout {
+		ws, cl := buildFileWriter(cfg)
+		writers = append(writers, ws)
+		closers = append(closers, cl...)
+	}
+
+	// 两者都未开启时，至少输出到 stdout，避免静默丢日志.
+	if len(writers) == 0 {
+		writers = append(writers, zapcore.Lock(os.Stdout))
+	}
+
+	core := zapcore.NewCore(
 		encoder,
-		zapcore.NewMultiWriteSyncer(syncInfoWriters...),
+		zapcore.NewMultiWriteSyncer(writers...),
 		zap.NewAtomicLevelAt(level),
-		// zap.LevelEnablerFunc(func(lvl zapcore.Level) bool {
-		// 	return lvl < zapcore.WarnLevel
-		// }),
 	)
 
-	/**
-	 *  WrapCore(f func(zapcore.Core) zapcore.Core): 使用一个新的 zapcore.Core 替换掉 Logger 内部原有的的 zapcore.Core 属性。
-	 *  Hooks(hooks ...func(zapcore.Entry) error): 注册钩子函数，用来在日志打印时同时调用注册的钩子函数。
-	 *  Fields(fs ...Field): 添加公共字段。
-	 *  ErrorOutput(w zapcore.WriteSyncer): 指定日志组件内部出现异常时的输出位置。
-	 *  Development(): 将日志记录器设为开发模式，这将使 DPanic 级别日志记录错误后执行 panic()。
-	 *  AddCaller(): 与 WithCaller(true) 等价。
-	 *  WithCaller(enabled bool): 指定是否在日志输出内容中增加调用信息，即文件名和行号。
-	 *  AddCallerSkip(skip int): 指定在通过调用栈获取文件名和行号时跳过的调用深度。
-	 *  AddStacktrace(lvl zapcore.LevelEnabler): 用来指定某个日志级别及以上级别输出调用堆栈。
-	 *  IncreaseLevel(lvl zapcore.LevelEnabler): 提高日志级别，如果传入的 lvl 比现有级别低，则不会改变日志级别。
-	 *  WithFatalHook(hook zapcore.CheckWriteHook): 当出现 Fatal 级别日志时调用的钩子函数。
-	 *  WithClock(clock zapcore.Clock): 指定日志记录器用来确定当前时间的 zapcore.Clock 对象，默认为 time.Now 的系统时钟。
-	 */
-	zlog = zap.New(
-		infoCore,
-		zap.AddCaller(),                   // zap.AddCaller 打印日志的代码所在的位置信息
-		zap.AddCallerSkip(1),              // AddCallerSkip 显示调用打印日志的是哪一行的 code 行数
-		zap.AddStacktrace(zap.ErrorLevel), // Error 时才会显示 stacktrace
-		// zap.Hooks(func(entry zapcore.Entry) error {
-		// 	entry.Message = "[" + entry.Level.String() + "] " + entry.Message
-		// 	return nil
-		// }),
-
+	zaplog = zap.New(
+		core,
+		zap.AddCaller(),
+		zap.AddCallerSkip(1),
+		zap.AddStacktrace(zap.ErrorLevel),
 	)
+	sugar = zaplog.Sugar()
 
-	undo = zap.ReplaceGlobals(zlog) // ReplaceGlobals来将全局的 logger 替换为我们通过配置定制的 logger
+	undofn = zap.ReplaceGlobals(zaplog)
 }
 
 func getLoggerLevel(lvl string) zapcore.Level {
@@ -149,92 +142,81 @@ func getLoggerLevel(lvl string) zapcore.Level {
 	return zapcore.InfoLevel
 }
 
+// Sync 刷新缓冲区并关闭文件资源.
+// 应在程序退出前调用: defer logger.Sync()
 func Sync() {
-	undo()
-	if err := zlog.Sync(); err != nil {
-		Info("logger sync error: ", err)
+	if undofn != nil {
+		undofn()
+	}
+
+	_ = zaplog.Sync()
+
+	for _, c := range closers {
+		_ = c.Close()
 	}
 }
 
-func UnDo() {
-	undo()
+// Undo 恢复 zap 全局 logger 到替换前的状态.
+func Undo() {
+	if undofn != nil {
+		undofn()
+	}
 }
 
-func getFileConfig(level string) zapcore.WriteSyncer {
-	var filehook zapcore.WriteSyncer
-
-	switch config.division {
-	case "size":
-		filehook = getFileSizeConfig(level)
+// buildFileWriter 根据切割方式构建文件 WriteSyncer.
+func buildFileWriter(cfg *logConfig) (zapcore.WriteSyncer, []io.Closer) {
+	switch cfg.division {
 	case "daily":
-		filehook = getFileDailyConfig(level)
+		return buildDailyWriter(cfg)
 	default:
-		filehook = getFileSizeConfig(level)
+		return buildSizeWriter(cfg)
 	}
-	return filehook
 }
 
-func getFileSizeConfig(level string) zapcore.WriteSyncer {
-	logname := time.Now().Format("2006-01-02.log")
-	logpath := stringx.BuilderJoin([]string{
-		config.path,
-		"-",
-		level,
-		"-",
-		logname,
-	})
+// buildSizeWriter 按大小切割.
+// 文件名格式: {path}-{level}.log
+func buildSizeWriter(cfg *logConfig) (zapcore.WriteSyncer, []io.Closer) {
+	logpath := cfg.path + "-" + cfg.level + ".log"
 
-	lumberJackLogger := &lumberjack.Logger{
-		Filename:   logpath,           // 日志文件路径
-		MaxSize:    MaxSize,           // 日志文件大小,单个文件最大尺寸，默认单位 M
-		MaxAge:     config.maxAge,     // 最长保存天数
-		MaxBackups: config.maxBackups, // 最多备份几个
-		Compress:   config.compress,   // 是否压缩文件，使用gzip
-		LocalTime:  true,              // 使用本地时间
+	lj := &lumberjack.Logger{
+		Filename:   logpath,
+		MaxSize:    cfg.maxSize,
+		MaxAge:     cfg.maxAge,
+		MaxBackups: cfg.maxBackups,
+		Compress:   cfg.compress,
+		LocalTime:  true,
 	}
 
-	return zapcore.AddSync(lumberJackLogger)
+	return zapcore.AddSync(lj), []io.Closer{lj}
 }
 
-func getFileDailyConfig(level string) zapcore.WriteSyncer {
-	// 生成rotatelogs的Logger 实际生成的文件名 demo.log.YYmmddHH
-	// demo.log是指向最新日志的链接
-	// 保存7天内的日志，每1小时(整点)分割一次日志
-	logpath := stringx.BuilderJoin([]string{
-		config.path,
-		level,
-		"-",
-		"-%Y-%m-%d.log",
-	})
+// buildDailyWriter 按天切割.
+// 使用 dailyWriteSyncer 在写入时自动检测日期变化并切换文件.
+func buildDailyWriter(cfg *logConfig) (zapcore.WriteSyncer, []io.Closer) {
+	dw := newDailyWriteSyncer(cfg)
+	return zapcore.AddSync(dw), []io.Closer{dw}
+}
 
-	hook, err := rotatelogs.New(
-		logpath, // 没有使用go风格反人类的format格式
-		// 为最新的日志建立软连接，指向最新日志文件
-		rotatelogs.WithLinkName(config.path+level+".log"),
-		// 清理条件： 将已切割的日志文件按条件(数量or时间)直接删除
-		// --- MaxAge and RotationCount cannot be both set  两者不能同时设置
-		// --- RotationCount用来设置最多切割的文件数(超过的会被 从旧到新 清理)
-		// --- MaxAge 是设置文件清理前的最长保存时间 最小分钟为单位
-		// --- if both are 0, give maxAge a default 7 * 24 * time.Hour
-		// WithRotationCount和WithMaxAge两个选项不能共存，只能设置一个(都设置编译时不会出错，但运行时会报错。也是为了防止影响切分的处理逻辑)
-		// rotatelogs.WithRotationCount(10),       // 超过这个数的文件会被清掉
-		rotatelogs.WithMaxAge(time.Hour*DayHour*WeekDay),
-		rotatelogs.WithRotationTime(time.Hour*DayHour),
-		// rotatelogs.WithRotationSize(), // 按文件大小切割日志,单位为 bytes
-	)
-	if err != nil {
-		panic(err)
+// buildEncoder 构建日志编码器.
+func buildEncoder(outJSON bool) zapcore.Encoder {
+	ec := zap.NewProductionEncoderConfig()
+
+	ec.TimeKey = "time"
+	ec.LevelKey = "level"
+	ec.NameKey = "logger"
+	ec.CallerKey = "caller"
+	ec.MessageKey = "msg"
+	ec.StacktraceKey = "stacktrace"
+
+	ec.EncodeTime = zapcore.ISO8601TimeEncoder
+	ec.LineEnding = zapcore.DefaultLineEnding
+	ec.EncodeLevel = zapcore.CapitalLevelEncoder
+	ec.EncodeDuration = zapcore.SecondsDurationEncoder
+	ec.EncodeCaller = zapcore.ShortCallerEncoder
+
+	if outJSON {
+		return zapcore.NewJSONEncoder(ec)
 	}
-	return zapcore.AddSync(hook)
-}
 
-func getEncoder() zapcore.Encoder {
-	encoderConfig := zap.NewProductionEncoderConfig()
-	encoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
-	encoderConfig.TimeKey = "time"
-	encoderConfig.EncodeLevel = zapcore.CapitalLevelEncoder
-	encoderConfig.EncodeDuration = zapcore.SecondsDurationEncoder
-	encoderConfig.EncodeCaller = zapcore.ShortCallerEncoder
-	// return zapcore.NewJSONEncoder(encoderConfig)
-	return zapcore.NewConsoleEncoder(encoderConfig)
+	return zapcore.NewConsoleEncoder(ec)
 }
