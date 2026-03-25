@@ -1,6 +1,6 @@
 module github.com/gtkit/logger/v2
 
-go 1.26.1
+go 1.26
 
 require (
 	go.uber.org/zap v1.27.1

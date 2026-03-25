@@ -8,15 +8,24 @@ import "go.uber.org/zap"
 
 // Zap 返回底层 *zap.Logger.
 func Zap() *zap.Logger {
+	globalMu.RLock()
+	defer globalMu.RUnlock()
+
 	return zaplog
 }
 
 func Zlog() *zap.Logger {
+	globalMu.RLock()
+	defer globalMu.RUnlock()
+
 	return zaplog
 }
 
 // Sugar 返回底层 *zap.SugaredLogger.
 func Sugar() *zap.SugaredLogger {
+	globalMu.RLock()
+	defer globalMu.RUnlock()
+
 	return sugar
 }
 
@@ -27,48 +36,78 @@ func Sugar() *zap.SugaredLogger {
 
 // Debug 记录 debug 级别日志.
 func Debug(msg string, fields ...zap.Field) {
+	globalMu.RLock()
+	defer globalMu.RUnlock()
+
 	zaplog.Debug(msg, fields...)
 }
 
 // Info 记录 info 级别日志.
 func Info(msg string, fields ...zap.Field) {
+	globalMu.RLock()
+	defer globalMu.RUnlock()
+
 	zaplog.Info(msg, fields...)
 }
 
 func ZInfo(msg string, fields ...zap.Field) {
+	globalMu.RLock()
+	defer globalMu.RUnlock()
+
 	zaplog.Info(msg, fields...)
 }
 
 // Warn 记录 warn 级别日志.
 func Warn(msg string, fields ...zap.Field) {
+	globalMu.RLock()
+	defer globalMu.RUnlock()
+
 	zaplog.Warn(msg, fields...)
 }
 
 func ZWarn(msg string, fields ...zap.Field) {
+	globalMu.RLock()
+	defer globalMu.RUnlock()
+
 	zaplog.Warn(msg, fields...)
 }
 
 // Error 记录 error 级别日志.
 func Error(msg string, fields ...zap.Field) {
+	globalMu.RLock()
+	defer globalMu.RUnlock()
+
 	zaplog.Error(msg, fields...)
 }
 
 func ZError(msg string, fields ...zap.Field) {
+	globalMu.RLock()
+	defer globalMu.RUnlock()
+
 	zaplog.Error(msg, fields...)
 }
 
 // DPanic 记录 dpanic 级别日志.
 func DPanic(msg string, fields ...zap.Field) {
+	globalMu.RLock()
+	defer globalMu.RUnlock()
+
 	zaplog.DPanic(msg, fields...)
 }
 
 // Panic 记录 panic 级别日志，随后 panic.
 func Panic(msg string, fields ...zap.Field) {
+	globalMu.RLock()
+	defer globalMu.RUnlock()
+
 	zaplog.Panic(msg, fields...)
 }
 
 // Fatal 记录 fatal 级别日志，随后调用 os.Exit(1).
 func Fatal(msg string, fields ...zap.Field) {
+	globalMu.RLock()
+	defer globalMu.RUnlock()
+
 	zaplog.Fatal(msg, fields...)
 }
 
@@ -78,41 +117,65 @@ func Fatal(msg string, fields ...zap.Field) {
 
 // Debugf 记录 debug 级别格式化日志.
 func Debugf(format string, args ...any) {
+	globalMu.RLock()
+	defer globalMu.RUnlock()
+
 	sugar.Debugf(format, args...)
 }
 
 // Infof 记录 info 级别格式化日志.
 func Infof(format string, args ...any) {
+	globalMu.RLock()
+	defer globalMu.RUnlock()
+
 	sugar.Infof(format, args...)
 }
 
 // Infow 记录 info 级别带 key-value 的日志.
 func Infow(msg string, keysAndValues ...any) {
+	globalMu.RLock()
+	defer globalMu.RUnlock()
+
 	sugar.Infow(msg, keysAndValues...)
 }
 
 // Warnf 记录 warn 级别格式化日志.
 func Warnf(format string, args ...any) {
+	globalMu.RLock()
+	defer globalMu.RUnlock()
+
 	sugar.Warnf(format, args...)
 }
 
 // Errorf 记录 error 级别格式化日志.
 func Errorf(format string, args ...any) {
+	globalMu.RLock()
+	defer globalMu.RUnlock()
+
 	sugar.Errorf(format, args...)
 }
 
 // DPanicf 记录 dpanic 级别格式化日志.
 func DPanicf(format string, args ...any) {
+	globalMu.RLock()
+	defer globalMu.RUnlock()
+
 	sugar.DPanicf(format, args...)
 }
 
 // Panicf 记录 panic 级别格式化日志，随后 panic.
 func Panicf(format string, args ...any) {
+	globalMu.RLock()
+	defer globalMu.RUnlock()
+
 	sugar.Panicf(format, args...)
 }
 
 // Fatalf 记录 fatal 级别格式化日志，随后调用 os.Exit(1).
 func Fatalf(format string, args ...any) {
+	globalMu.RLock()
+	defer globalMu.RUnlock()
+
 	sugar.Fatalf(format, args...)
 }
 
@@ -123,6 +186,9 @@ func Fatalf(format string, args ...any) {
 // LogIf 当 err != nil 时记录 error 级别日志.
 func LogIf(err error) {
 	if err != nil {
+		globalMu.RLock()
+		defer globalMu.RUnlock()
+
 		zaplog.Error("error occurred", zap.Error(err))
 	}
 }
@@ -133,14 +199,20 @@ func LogIf(err error) {
 
 // HInfo 记录 info 日志，同时通过 Messager 推送消息.
 func HInfo(msg string, fields ...zap.Field) {
+	globalMu.RLock()
+	defer globalMu.RUnlock()
+
 	zaplog.Info(msg, fields...)
 	if msgr != nil {
-		msgr.Send(msg)
+		msgr.Send(formatFieldsMsg(msg, fields))
 	}
 }
 
 // HInfof 记录 info 格式化日志，同时推送消息.
 func HInfof(format string, args ...any) {
+	globalMu.RLock()
+	defer globalMu.RUnlock()
+
 	sugar.Infof(format, args...)
 	if msgr != nil {
 		msgr.Send(formatMsg(format, args))
@@ -149,14 +221,20 @@ func HInfof(format string, args ...any) {
 
 // HInfoTo 记录 info 日志，同时推送消息到指定 URL.
 func HInfoTo(url, msg string, fields ...zap.Field) {
+	globalMu.RLock()
+	defer globalMu.RUnlock()
+
 	zaplog.Info(msg, fields...)
 	if msgr != nil {
-		msgr.SendTo(url, msg)
+		msgr.SendTo(url, formatFieldsMsg(msg, fields))
 	}
 }
 
 // HInfoTof 记录 info 格式化日志，同时推送消息到指定 URL.
 func HInfoTof(url, format string, args ...any) {
+	globalMu.RLock()
+	defer globalMu.RUnlock()
+
 	sugar.Infof(format, args...)
 	if msgr != nil {
 		msgr.SendTo(url, formatMsg(format, args))
@@ -165,14 +243,20 @@ func HInfoTof(url, format string, args ...any) {
 
 // HError 记录 error 日志，同时推送消息.
 func HError(msg string, fields ...zap.Field) {
+	globalMu.RLock()
+	defer globalMu.RUnlock()
+
 	zaplog.Error(msg, fields...)
 	if msgr != nil {
-		msgr.Send(msg)
+		msgr.Send(formatFieldsMsg(msg, fields))
 	}
 }
 
 // HErrorf 记录 error 格式化日志，同时推送消息.
 func HErrorf(format string, args ...any) {
+	globalMu.RLock()
+	defer globalMu.RUnlock()
+
 	sugar.Errorf(format, args...)
 	if msgr != nil {
 		msgr.Send(formatMsg(format, args))
@@ -181,14 +265,20 @@ func HErrorf(format string, args ...any) {
 
 // HErrorTo 记录 error 日志，同时推送消息到指定 URL.
 func HErrorTo(url, msg string, fields ...zap.Field) {
+	globalMu.RLock()
+	defer globalMu.RUnlock()
+
 	zaplog.Error(msg, fields...)
 	if msgr != nil {
-		msgr.SendTo(url, msg)
+		msgr.SendTo(url, formatFieldsMsg(msg, fields))
 	}
 }
 
 // HErrorTof 记录 error 格式化日志，同时推送消息到指定 URL.
 func HErrorTof(url, format string, args ...any) {
+	globalMu.RLock()
+	defer globalMu.RUnlock()
+
 	sugar.Errorf(format, args...)
 	if msgr != nil {
 		msgr.SendTo(url, formatMsg(format, args))

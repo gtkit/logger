@@ -13,19 +13,19 @@ import (
 // 日期变化时关闭旧 lumberjack，创建新日期文件名的 lumberjack.
 // 同一天内超过 MaxSize 时，lumberjack 仍会按大小 rotate.
 type dailyWriteSyncer struct {
-	mu  sync.Mutex
-	cfg *logConfig
-	lj  *lumberjack.Logger
-	day int // 当前文件对应的 Day of month
+	mu          sync.Mutex
+	cfg         *logConfig
+	lj          *lumberjack.Logger
+	currentDate string // 当前文件对应的完整本地日期: 2006-01-02
 }
 
 func newDailyWriteSyncer(cfg *logConfig) *dailyWriteSyncer {
 	now := time.Now()
 
 	return &dailyWriteSyncer{
-		cfg: cfg,
-		lj:  newLumberjack(cfg, now),
-		day: now.Day(),
+		cfg:         cfg,
+		lj:          newLumberjack(cfg, now),
+		currentDate: now.Format("2006-01-02"),
 	}
 }
 
@@ -49,10 +49,11 @@ func (d *dailyWriteSyncer) Write(p []byte) (int, error) {
 	defer d.mu.Unlock()
 
 	now := time.Now()
-	if now.Day() != d.day {
+	currentDate := now.Format("2006-01-02")
+	if currentDate != d.currentDate {
 		_ = d.lj.Close()
 		d.lj = newLumberjack(d.cfg, now)
-		d.day = now.Day()
+		d.currentDate = currentDate
 	}
 
 	return d.lj.Write(p)

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sync"
 	"time"
 
 	"go.uber.org/zap"
@@ -11,14 +12,50 @@ import (
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 
+type lifecycleState struct {
+	root    *zap.Logger
+	undo    func()
+	closers []io.Closer
+
+	undoOnce  sync.Once
+	closeOnce sync.Once
+}
+
+func (s *lifecycleState) Undo() {
+	if s == nil {
+		return
+	}
+
+	s.undoOnce.Do(func() {
+		if s.undo != nil {
+			s.undo()
+		}
+	})
+}
+
+func (s *lifecycleState) Sync() {
+	if s == nil {
+		return
+	}
+
+	s.closeOnce.Do(func() {
+		s.Undo()
+		if s.root != nil {
+			_ = s.root.Sync()
+		}
+		for _, c := range s.closers {
+			_ = c.Close()
+		}
+	})
+}
+
 // Logger 封装 zap.Logger，提供 Structured 和 Sugar 双模式日志.
 // 通过 New 或 MustNew 创建实例.
 type Logger struct {
 	zap      *zap.Logger
 	sugar    *zap.SugaredLogger
-	undo     func()
+	state    *lifecycleState
 	messager Messager
-	closers  []io.Closer
 }
 
 // New 创建 Logger 实例.
@@ -100,11 +137,14 @@ func build(cfg *Config) (*Logger, error) {
 	undo := zap.ReplaceGlobals(zlog)
 
 	return &Logger{
-		zap:      zlog,
-		sugar:    zlog.Sugar(),
-		undo:     undo,
+		zap:   zlog,
+		sugar: zlog.Sugar(),
+		state: &lifecycleState{
+			root:    zlog,
+			undo:    undo,
+			closers: closers,
+		},
 		messager: cfg.messager,
-		closers:  closers,
 	}, nil
 }
 

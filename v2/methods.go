@@ -27,9 +27,8 @@ func (l *Logger) With(fields ...zap.Field) *Logger {
 	return &Logger{
 		zap:      newZap,
 		sugar:    newZap.Sugar(),
-		undo:     l.undo,
+		state:    l.state,
 		messager: l.messager,
-		closers:  l.closers,
 	}
 }
 
@@ -40,9 +39,8 @@ func (l *Logger) Named(name string) *Logger {
 	return &Logger{
 		zap:      newZap,
 		sugar:    newZap.Sugar(),
-		undo:     l.undo,
+		state:    l.state,
 		messager: l.messager,
-		closers:  l.closers,
 	}
 }
 
@@ -52,18 +50,13 @@ func (l *Logger) Named(name string) *Logger {
 
 // Undo 恢复 zap 全局 logger 到替换前的状态.
 func (l *Logger) Undo() {
-	if l.undo != nil {
-		l.undo()
-	}
+	l.state.Undo()
 }
 
 // Sync 刷新缓冲区并关闭文件资源.
 // 应在程序退出前调用: defer log.Sync()
 func (l *Logger) Sync() {
-	_ = l.zap.Sync()
-	for _, c := range l.closers {
-		_ = c.Close()
-	}
+	l.state.Sync()
 }
 
 // ============================================================
@@ -169,7 +162,7 @@ func (l *Logger) LogIf(err error) {
 func (l *Logger) HInfo(msg string, fields ...zap.Field) {
 	l.zap.Info(msg, fields...)
 	if l.messager != nil {
-		l.messager.Send(msg)
+		l.messager.Send(formatFieldsMsg(msg, fields))
 	}
 }
 
@@ -185,7 +178,7 @@ func (l *Logger) HInfof(format string, args ...any) {
 func (l *Logger) HInfoTo(url, msg string, fields ...zap.Field) {
 	l.zap.Info(msg, fields...)
 	if l.messager != nil {
-		l.messager.SendTo(url, msg)
+		l.messager.SendTo(url, formatFieldsMsg(msg, fields))
 	}
 }
 
@@ -201,7 +194,7 @@ func (l *Logger) HInfoTof(url, format string, args ...any) {
 func (l *Logger) HError(msg string, fields ...zap.Field) {
 	l.zap.Error(msg, fields...)
 	if l.messager != nil {
-		l.messager.Send(msg)
+		l.messager.Send(formatFieldsMsg(msg, fields))
 	}
 }
 
@@ -217,7 +210,7 @@ func (l *Logger) HErrorf(format string, args ...any) {
 func (l *Logger) HErrorTo(url, msg string, fields ...zap.Field) {
 	l.zap.Error(msg, fields...)
 	if l.messager != nil {
-		l.messager.SendTo(url, msg)
+		l.messager.SendTo(url, formatFieldsMsg(msg, fields))
 	}
 }
 

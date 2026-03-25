@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sync"
 
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -13,13 +14,16 @@ import (
 const (
 	defaultPath       = "./logs/"
 	defaultMaxSize    = 512 // MB
-	defaultMaxAge     = 7  // 天
+	defaultMaxAge     = 7   // 天
 	defaultMaxBackups = 50
 )
 
 // 包级全局变量.
 // init() 中赋予安全默认值，NewZap() 中替换为正式配置.
 var (
+	baseGlobalLogger = zap.L()
+	globalMu         sync.RWMutex
+
 	zaplog  *zap.Logger
 	sugar   *zap.SugaredLogger
 	undofn  func()
@@ -84,12 +88,13 @@ func NewZap(opts ...Option) {
 		}
 	}
 
-	msgr = cfg.messager
-
 	initZap(cfg)
 }
 
 func initZap(cfg *logConfig) {
+	globalMu.Lock()
+	defer globalMu.Unlock()
+
 	// 清理上一次初始化的资源，防止重复调用 NewZap 导致泄漏.
 	for _, c := range closers {
 		_ = c.Close()
@@ -116,6 +121,8 @@ func initZap(cfg *logConfig) {
 	if len(writers) == 0 {
 		writers = append(writers, zapcore.Lock(os.Stdout))
 	}
+
+	msgr = cfg.messager
 
 	core := zapcore.NewCore(
 		encoder,
@@ -145,8 +152,13 @@ func getLoggerLevel(lvl string) zapcore.Level {
 // Sync 刷新缓冲区并关闭文件资源.
 // 应在程序退出前调用: defer logger.Sync()
 func Sync() {
+	globalMu.Lock()
+	defer globalMu.Unlock()
+
 	if undofn != nil {
 		undofn()
+	} else {
+		zap.ReplaceGlobals(baseGlobalLogger)
 	}
 
 	_ = zaplog.Sync()
@@ -158,9 +170,15 @@ func Sync() {
 
 // Undo 恢复 zap 全局 logger 到替换前的状态.
 func Undo() {
+	globalMu.Lock()
+	defer globalMu.Unlock()
+
 	if undofn != nil {
 		undofn()
+		return
 	}
+
+	zap.ReplaceGlobals(baseGlobalLogger)
 }
 
 // buildFileWriter 根据切割方式构建文件 WriteSyncer.
