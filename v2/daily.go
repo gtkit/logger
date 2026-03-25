@@ -9,7 +9,7 @@ import (
 
 // dailyWriteSyncer 按天自动切换日志文件.
 //
-// 每次 Write 时比较 time.Now().Day() 与缓存的 day 值.
+// 每次 Write 时比较 time.Now().Format("2006-01-02") 与缓存的 currentDate.
 // 日期变化时关闭旧 lumberjack，创建新日期文件名的 lumberjack.
 // 同一天内超过 MaxSize 时，lumberjack 仍会按大小 rotate.
 type dailyWriteSyncer struct {
