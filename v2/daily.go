@@ -1,37 +1,39 @@
 package logger
 
 import (
+	"fmt"
 	"sync"
 	"time"
 
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 
-// dailyWriteSyncer 按天自动切换日志文件.
-//
-// 每次 Write 时比较 time.Now().Format("2006-01-02") 与缓存的 currentDate.
-// 日期变化时关闭旧 lumberjack，创建新日期文件名的 lumberjack.
-// 同一天内超过 MaxSize 时，lumberjack 仍会按大小 rotate.
 type dailyWriteSyncer struct {
 	mu          sync.Mutex
 	cfg         *Config
 	lj          *lumberjack.Logger
-	currentDate string // 当前文件对应的完整本地日期: 2006-01-02
+	currentDate string
 }
 
-func newDailyWriteSyncer(cfg *Config) *dailyWriteSyncer {
+func newDailyWriteSyncer(cfg *Config) (*dailyWriteSyncer, error) {
 	now := time.Now()
+	lj, err := newLumberjack(cfg, now)
+	if err != nil {
+		return nil, err
+	}
 
 	return &dailyWriteSyncer{
 		cfg:         cfg,
-		lj:          newLumberjack(cfg, now),
-		currentDate: now.Format("2006-01-02"),
-	}
+		lj:          lj,
+		currentDate: now.Format(time.DateOnly),
+	}, nil
 }
 
-func newLumberjack(cfg *Config, t time.Time) *lumberjack.Logger {
-	// 文件名格式: {path}-{level}-2006-01-02.log
-	logpath := cfg.path + "-" + cfg.level + "-" + t.Format("2006-01-02") + ".log"
+func newLumberjack(cfg *Config, t time.Time) (*lumberjack.Logger, error) {
+	logpath := cfg.path + "-" + cfg.level + "-" + t.Format(time.DateOnly) + ".log"
+	if err := ensureLogDir(logpath); err != nil {
+		return nil, err
+	}
 
 	return &lumberjack.Logger{
 		Filename:   logpath,
@@ -40,34 +42,42 @@ func newLumberjack(cfg *Config, t time.Time) *lumberjack.Logger {
 		MaxBackups: cfg.maxBackups,
 		Compress:   cfg.compress,
 		LocalTime:  true,
-	}
+	}, nil
 }
 
-// Write implements io.Writer.
 func (d *dailyWriteSyncer) Write(p []byte) (int, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
 	now := time.Now()
-	currentDate := now.Format("2006-01-02")
+	currentDate := now.Format(time.DateOnly)
 	if currentDate != d.currentDate {
 		_ = d.lj.Close()
-		d.lj = newLumberjack(d.cfg, now)
+		next, err := newLumberjack(d.cfg, now)
+		if err != nil {
+			return 0, err
+		}
+		d.lj = next
 		d.currentDate = currentDate
 	}
 
-	return d.lj.Write(p)
+	n, err := d.lj.Write(p)
+	if err != nil {
+		return n, fmt.Errorf("logger: daily write: %w", err)
+	}
+	return n, nil
 }
 
-// Sync implements zapcore.WriteSyncer.
 func (d *dailyWriteSyncer) Sync() error {
 	return nil
 }
 
-// Close implements io.Closer.
 func (d *dailyWriteSyncer) Close() error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
-	return d.lj.Close()
+	if err := d.lj.Close(); err != nil {
+		return fmt.Errorf("logger: daily close: %w", err)
+	}
+	return nil
 }

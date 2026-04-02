@@ -1,11 +1,14 @@
 package logger
 
-import "fmt"
+import (
+	"errors"
+	"fmt"
+	"strings"
+)
 
-// Option 配置日志的选项函数.
+// Option configures the package-level logger.
 type Option func(*logConfig) error
 
-// WithConsole 设置是否输出到控制台.
 func WithConsole(b bool) Option {
 	return func(c *logConfig) error {
 		c.consoleStdout = b
@@ -13,7 +16,6 @@ func WithConsole(b bool) Option {
 	}
 }
 
-// WithFile 设置是否输出到文件.
 func WithFile(b bool) Option {
 	return func(c *logConfig) error {
 		c.fileStdout = b
@@ -21,7 +23,6 @@ func WithFile(b bool) Option {
 	}
 }
 
-// WithDivision 设置日志切割方式: "size" 按大小, "daily" 按天.
 func WithDivision(d string) Option {
 	return func(c *logConfig) error {
 		if d != "size" && d != "daily" {
@@ -32,18 +33,16 @@ func WithDivision(d string) Option {
 	}
 }
 
-// WithPath 设置日志文件路径前缀.
 func WithPath(p string) Option {
 	return func(c *logConfig) error {
 		if p == "" {
-			return fmt.Errorf("logger: path must not be empty")
+			return errors.New("logger: path must not be empty")
 		}
 		c.path = p
 		return nil
 	}
 }
 
-// WithOutJSON 设置是否输出为 JSON 格式.
 func WithOutJSON(b bool) Option {
 	return func(c *logConfig) error {
 		c.outJSON = b
@@ -51,7 +50,6 @@ func WithOutJSON(b bool) Option {
 	}
 }
 
-// WithCompress 设置是否压缩归档日志文件.
 func WithCompress(b bool) Option {
 	return func(c *logConfig) error {
 		c.compress = b
@@ -59,7 +57,6 @@ func WithCompress(b bool) Option {
 	}
 }
 
-// WithMaxAge 设置日志文件最大保存天数.
 func WithMaxAge(days int) Option {
 	return func(c *logConfig) error {
 		if days <= 0 {
@@ -70,7 +67,6 @@ func WithMaxAge(days int) Option {
 	}
 }
 
-// WithMaxBackups 设置日志文件最大备份数量.
 func WithMaxBackups(n int) Option {
 	return func(c *logConfig) error {
 		if n < 0 {
@@ -81,7 +77,6 @@ func WithMaxBackups(n int) Option {
 	}
 }
 
-// WithMaxSize 设置单个日志文件最大大小 (MB).
 func WithMaxSize(mb int) Option {
 	return func(c *logConfig) error {
 		if mb <= 0 {
@@ -92,7 +87,6 @@ func WithMaxSize(mb int) Option {
 	}
 }
 
-// WithLevel 设置日志级别: debug, info, warn, error, dpanic, panic, fatal.
 func WithLevel(l string) Option {
 	return func(c *logConfig) error {
 		if _, ok := levelMap[l]; !ok {
@@ -103,10 +97,76 @@ func WithLevel(l string) Option {
 	}
 }
 
-// WithMessager 设置消息推送 Hook（飞书/钉钉/企微等通知）.
 func WithMessager(m Messager) Option {
 	return func(c *logConfig) error {
 		c.messager = m
+		return nil
+	}
+}
+
+func WithMessagerQueueSize(size int) Option {
+	return func(c *logConfig) error {
+		if size <= 0 {
+			return fmt.Errorf("logger: messagerQueueSize must be > 0, got %d", size)
+		}
+		c.messagerQueueSize = size
+		return nil
+	}
+}
+
+func WithContextFields(fn ContextFieldsFunc) Option {
+	return func(c *logConfig) error {
+		c.contextFields = fn
+		return nil
+	}
+}
+
+// ChannelOption configures a single channel route.
+type ChannelOption func(*channelConfig) error
+
+// WithChannel registers a dedicated file route for a channel.
+// Channel files inherit the global rotation and encoding settings.
+func WithChannel(name string, opts ...ChannelOption) Option {
+	return func(c *logConfig) error {
+		trimmed := strings.TrimSpace(name)
+		if trimmed == "" {
+			return errors.New("logger: channel name must not be empty")
+		}
+
+		cfg := &channelConfig{
+			duplicateToDefault: true,
+		}
+		for _, opt := range opts {
+			if err := opt(cfg); err != nil {
+				return err
+			}
+		}
+		if cfg.path == "" {
+			return fmt.Errorf("logger: channel %q path must not be empty", trimmed)
+		}
+
+		if c.channels == nil {
+			c.channels = make(map[string]*channelConfig)
+		}
+		c.channels[trimmed] = cfg
+
+		return nil
+	}
+}
+
+func WithChannelPath(path string) ChannelOption {
+	return func(c *channelConfig) error {
+		if path == "" {
+			return errors.New("logger: channel path must not be empty")
+		}
+		c.path = path
+		return nil
+	}
+}
+
+func WithChannelDuplicateToDefault(enabled bool) ChannelOption {
+	return func(c *channelConfig) error {
+		c.duplicateToDefault = enabled
 		return nil
 	}
 }

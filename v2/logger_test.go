@@ -143,11 +143,23 @@ func TestNewInvalidOptions(t *testing.T) {
 		{"negative maxBackups", logger.WithMaxBackups(-1)},
 		{"zero maxSize", logger.WithMaxSize(0)},
 		{"invalid level", logger.WithLevel("trace")},
+		{
+			"channel duplicates default path",
+			logger.WithChannel("order",
+				logger.WithChannelPath("./testlogs/app"),
+				logger.WithChannelDuplicateToDefault(true),
+			),
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := logger.New(tt.opt)
+			opts := []logger.Option{tt.opt}
+			if tt.name == "channel duplicates default path" {
+				opts = append([]logger.Option{logger.WithPath("./testlogs/app")}, opts...)
+			}
+
+			_, err := logger.New(opts...)
 			if err == nil {
 				t.Fatalf("expected error for %s", tt.name)
 			}

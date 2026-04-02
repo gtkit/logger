@@ -251,6 +251,11 @@ issues:
         - perfsprint
         - unparam
         - musttag
+        - revive
+        - usetesting
+        - tparallel
+        - usestdlibvars
+        - intrange
 
     # generated 文件跳过全部
     - path: ".*\\.gen\\.go"

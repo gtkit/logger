@@ -1,223 +1,348 @@
 package logger
 
-import "go.uber.org/zap"
+import (
+	"context"
+	"strings"
 
-// ============================================================
-// 访问底层
-// ============================================================
+	"go.uber.org/zap"
+)
 
-// Zap 返回底层 *zap.Logger.
 func (l *Logger) Zap() *zap.Logger {
 	return l.zap
 }
 
-// Sugar 返回底层 *zap.SugaredLogger.
 func (l *Logger) Sugar() *zap.SugaredLogger {
 	return l.sugar
 }
 
-// With 返回带有预设字段的新 Logger.
-// 新 Logger 共享底层 closers 和 messager，但拥有独立的 zap/sugar 实例.
-//
-//	reqLog := log.With(zap.String("request_id", rid))
-//	reqLog.Info("processing", zap.Int("status", 200))
 func (l *Logger) With(fields ...zap.Field) *Logger {
-	newZap := l.zap.With(fields...)
-
-	return &Logger{
-		zap:      newZap,
-		sugar:    newZap.Sugar(),
-		state:    l.state,
-		messager: l.messager,
-	}
+	combined := append(copyFields(l.fields), fields...)
+	return l.rebuild(l.rootLogger(), l.name, l.channel, combined)
 }
 
-// Named 返回带有子 logger 名称的新 Logger.
 func (l *Logger) Named(name string) *Logger {
-	newZap := l.zap.Named(name)
+	return l.rebuild(l.rootLogger(), joinLoggerName(l.name, name), l.channel, l.fields)
+}
 
-	return &Logger{
-		zap:      newZap,
-		sugar:    newZap.Sugar(),
-		state:    l.state,
-		messager: l.messager,
+func (l *Logger) Channel(name string) *Logger {
+	trimmed := strings.TrimSpace(name)
+	if trimmed == "" {
+		return l
+	}
+
+	if cached := l.cachedRootChannel(trimmed); cached != nil {
+		return cached
+	}
+
+	return l.rebuild(l.rootLogger(), l.name, trimmed, l.fields)
+}
+
+// DroppedMessages 返回异步 Messager 因队列满而丢弃的推送消息数量。
+// 如果未配置 Messager，始终返回 0。
+func (l *Logger) DroppedMessages() int64 {
+	if l.state != nil && l.state.asyncMsg != nil {
+		return l.state.asyncMsg.dropped.Load()
+	}
+	return 0
+}
+
+// SetLevel 运行时动态调整日志级别，影响所有 logger（包括 channel）。
+// 支持: debug, info, warn, error, dpanic, panic, fatal.
+func (l *Logger) SetLevel(level string) {
+	if lvl, ok := levelMap[level]; ok && l.state != nil {
+		l.state.atomicLevel.SetLevel(lvl)
 	}
 }
 
-// ============================================================
-// 生命周期
-// ============================================================
+// GetLevel 返回当前日志级别字符串。
+func (l *Logger) GetLevel() string {
+	if l.state != nil {
+		return l.state.atomicLevel.Level().String()
+	}
+	return "info"
+}
 
-// Undo 恢复 zap 全局 logger 到替换前的状态.
 func (l *Logger) Undo() {
 	l.state.Undo()
 }
 
-// Sync 刷新缓冲区并关闭文件资源.
-// 应在程序退出前调用: defer log.Sync()
 func (l *Logger) Sync() {
 	l.state.Sync()
 }
 
-// ============================================================
-// Structured 日志方法（zap.Field 风格，主推 API）
-// 签名与 zap.Logger 一致: func(msg string, fields ...zap.Field)
-// ============================================================
-
-// Debug 记录 debug 级别日志.
 func (l *Logger) Debug(msg string, fields ...zap.Field) {
 	l.zap.Debug(msg, fields...)
 }
 
-// Info 记录 info 级别日志.
 func (l *Logger) Info(msg string, fields ...zap.Field) {
 	l.zap.Info(msg, fields...)
 }
 
-// Warn 记录 warn 级别日志.
 func (l *Logger) Warn(msg string, fields ...zap.Field) {
 	l.zap.Warn(msg, fields...)
 }
 
-// Error 记录 error 级别日志.
 func (l *Logger) Error(msg string, fields ...zap.Field) {
 	l.zap.Error(msg, fields...)
 }
 
-// DPanic 记录 dpanic 级别日志.
 func (l *Logger) DPanic(msg string, fields ...zap.Field) {
 	l.zap.DPanic(msg, fields...)
 }
 
-// Panic 记录 panic 级别日志，随后 panic.
 func (l *Logger) Panic(msg string, fields ...zap.Field) {
 	l.zap.Panic(msg, fields...)
 }
 
-// Fatal 记录 fatal 级别日志，随后调用 os.Exit(1).
 func (l *Logger) Fatal(msg string, fields ...zap.Field) {
 	l.zap.Fatal(msg, fields...)
 }
 
-// ============================================================
-// Sugar 日志方法（格式化风格，便捷 API）
-// ============================================================
-
-// Debugf 记录 debug 级别格式化日志.
 func (l *Logger) Debugf(format string, args ...any) {
 	l.sugar.Debugf(format, args...)
 }
 
-// Infof 记录 info 级别格式化日志.
 func (l *Logger) Infof(format string, args ...any) {
 	l.sugar.Infof(format, args...)
 }
 
-// Infow 记录 info 级别带 key-value 的日志.
 func (l *Logger) Infow(msg string, keysAndValues ...any) {
 	l.sugar.Infow(msg, keysAndValues...)
 }
 
-// Warnf 记录 warn 级别格式化日志.
 func (l *Logger) Warnf(format string, args ...any) {
 	l.sugar.Warnf(format, args...)
 }
 
-// Errorf 记录 error 级别格式化日志.
 func (l *Logger) Errorf(format string, args ...any) {
 	l.sugar.Errorf(format, args...)
 }
 
-// DPanicf 记录 dpanic 级别格式化日志.
 func (l *Logger) DPanicf(format string, args ...any) {
 	l.sugar.DPanicf(format, args...)
 }
 
-// Panicf 记录 panic 级别格式化日志，随后 panic.
 func (l *Logger) Panicf(format string, args ...any) {
 	l.sugar.Panicf(format, args...)
 }
 
-// Fatalf 记录 fatal 级别格式化日志，随后调用 os.Exit(1).
 func (l *Logger) Fatalf(format string, args ...any) {
 	l.sugar.Fatalf(format, args...)
 }
 
-// ============================================================
-// 便捷方法
-// ============================================================
+func (l *Logger) DebugCtx(ctx context.Context, msg string, fields ...zap.Field) {
+	l.zap.Debug(msg, l.ctxFields(ctx, fields)...)
+}
 
-// LogIf 当 err != nil 时记录 error 级别日志.
+func (l *Logger) InfoCtx(ctx context.Context, msg string, fields ...zap.Field) {
+	l.zap.Info(msg, l.ctxFields(ctx, fields)...)
+}
+
+func (l *Logger) WarnCtx(ctx context.Context, msg string, fields ...zap.Field) {
+	l.zap.Warn(msg, l.ctxFields(ctx, fields)...)
+}
+
+func (l *Logger) ErrorCtx(ctx context.Context, msg string, fields ...zap.Field) {
+	l.zap.Error(msg, l.ctxFields(ctx, fields)...)
+}
+
+func (l *Logger) ctxFields(ctx context.Context, fields []zap.Field) []zap.Field {
+	if l.contextFields == nil {
+		return fields
+	}
+	extracted := l.contextFields(ctx)
+	if len(extracted) == 0 {
+		return fields
+	}
+	merged := make([]zap.Field, 0, len(extracted)+len(fields))
+	merged = append(merged, extracted...)
+	merged = append(merged, fields...)
+	return merged
+}
+
 func (l *Logger) LogIf(err error) {
 	if err != nil {
 		l.zap.Error("error occurred", zap.Error(err))
 	}
 }
 
-// ============================================================
-// Hook 消息方法（日志 + 外部推送）
-// ============================================================
-
-// HInfo 记录 info 日志，同时通过 Messager 推送消息.
 func (l *Logger) HInfo(msg string, fields ...zap.Field) {
 	l.zap.Info(msg, fields...)
 	if l.messager != nil {
-		l.messager.Send(formatFieldsMsg(msg, fields))
+		l.messager.Send(formatFieldsMsg(msg, withChannelField(l.channel, fields)))
 	}
 }
 
-// HInfof 记录 info 格式化日志，同时推送消息.
 func (l *Logger) HInfof(format string, args ...any) {
 	l.sugar.Infof(format, args...)
 	if l.messager != nil {
-		l.messager.Send(formatMsg(format, args))
+		l.messager.Send(formatChannelMsg(l.channel, formatMsg(format, args)))
 	}
 }
 
-// HInfoTo 记录 info 日志，同时推送消息到指定 URL.
 func (l *Logger) HInfoTo(url, msg string, fields ...zap.Field) {
 	l.zap.Info(msg, fields...)
 	if l.messager != nil {
-		l.messager.SendTo(url, formatFieldsMsg(msg, fields))
+		l.messager.SendTo(url, formatFieldsMsg(msg, withChannelField(l.channel, fields)))
 	}
 }
 
-// HInfoTof 记录 info 格式化日志，同时推送消息到指定 URL.
 func (l *Logger) HInfoTof(url, format string, args ...any) {
 	l.sugar.Infof(format, args...)
 	if l.messager != nil {
-		l.messager.SendTo(url, formatMsg(format, args))
+		l.messager.SendTo(url, formatChannelMsg(l.channel, formatMsg(format, args)))
 	}
 }
 
-// HError 记录 error 日志，同时推送消息.
 func (l *Logger) HError(msg string, fields ...zap.Field) {
 	l.zap.Error(msg, fields...)
 	if l.messager != nil {
-		l.messager.Send(formatFieldsMsg(msg, fields))
+		l.messager.Send(formatFieldsMsg(msg, withChannelField(l.channel, fields)))
 	}
 }
 
-// HErrorf 记录 error 格式化日志，同时推送消息.
 func (l *Logger) HErrorf(format string, args ...any) {
 	l.sugar.Errorf(format, args...)
 	if l.messager != nil {
-		l.messager.Send(formatMsg(format, args))
+		l.messager.Send(formatChannelMsg(l.channel, formatMsg(format, args)))
 	}
 }
 
-// HErrorTo 记录 error 日志，同时推送消息到指定 URL.
 func (l *Logger) HErrorTo(url, msg string, fields ...zap.Field) {
 	l.zap.Error(msg, fields...)
 	if l.messager != nil {
-		l.messager.SendTo(url, formatFieldsMsg(msg, fields))
+		l.messager.SendTo(url, formatFieldsMsg(msg, withChannelField(l.channel, fields)))
 	}
 }
 
-// HErrorTof 记录 error 格式化日志，同时推送消息到指定 URL.
 func (l *Logger) HErrorTof(url, format string, args ...any) {
 	l.sugar.Errorf(format, args...)
 	if l.messager != nil {
-		l.messager.SendTo(url, formatMsg(format, args))
+		l.messager.SendTo(url, formatChannelMsg(l.channel, formatMsg(format, args)))
 	}
+}
+
+func (l *Logger) rootLogger() *zap.Logger {
+	if l.base != nil {
+		return l.base
+	}
+
+	return l.zap
+}
+
+func (l *Logger) channelRoute(name string) *channelRoute {
+	if l.state == nil || l.state.channelRoutes == nil {
+		return nil
+	}
+
+	return l.state.channelRoutes[name]
+}
+
+func (l *Logger) rebuild(base *zap.Logger, name, channel string, fields []zap.Field) *Logger {
+	z := l.baseForChannel(channel)
+	if name != "" {
+		z = z.Named(name)
+	}
+	if len(fields) > 0 {
+		z = z.With(fields...)
+	}
+
+	return &Logger{
+		base:          base,
+		zap:           z,
+		sugar:         z.Sugar(),
+		state:         l.state,
+		messager:      l.messager,
+		contextFields: l.contextFields,
+		channel:       channel,
+		name:          name,
+		fields:        copyFields(fields),
+	}
+}
+
+func (l *Logger) baseForChannel(channel string) *zap.Logger {
+	if channel == "" {
+		return l.rootLogger()
+	}
+
+	if route := l.channelRoute(channel); route != nil {
+		return route.logger
+	}
+
+	if l.state == nil {
+		return l.rootLogger().With(zap.String("channel", channel))
+	}
+
+	if cached, ok := l.state.dynamicChannelBases.Load(channel); ok {
+		if z, ok := cached.(*zap.Logger); ok {
+			return z
+		}
+	}
+
+	logger := l.rootLogger().With(zap.String("channel", channel))
+	actual, _ := l.state.dynamicChannelBases.LoadOrStore(channel, logger)
+
+	if z, ok := actual.(*zap.Logger); ok {
+		return z
+	}
+
+	return logger
+}
+
+func (l *Logger) cachedRootChannel(channel string) *Logger {
+	if !l.isRootContext() {
+		return nil
+	}
+
+	if l.state == nil || l.state.rootChannels == nil {
+		return nil
+	}
+
+	return l.state.rootChannels[channel]
+}
+
+func (l *Logger) isRootContext() bool {
+	return l.channel == "" && l.name == "" && len(l.fields) == 0
+}
+
+func copyFields(fields []zap.Field) []zap.Field {
+	if len(fields) == 0 {
+		return nil
+	}
+
+	cloned := make([]zap.Field, len(fields))
+	copy(cloned, fields)
+
+	return cloned
+}
+
+func joinLoggerName(current, next string) string {
+	if current == "" {
+		return next
+	}
+	if next == "" {
+		return current
+	}
+
+	return current + "." + next
+}
+
+func withChannelField(channel string, fields []zap.Field) []zap.Field {
+	if channel == "" {
+		return fields
+	}
+
+	enriched := make([]zap.Field, 0, len(fields)+1)
+	enriched = append(enriched, zap.String("channel", channel))
+	enriched = append(enriched, fields...)
+
+	return enriched
+}
+
+func formatChannelMsg(channel, msg string) string {
+	if channel == "" {
+		return msg
+	}
+
+	return "[channel=" + channel + "] " + msg
 }

@@ -1,33 +1,36 @@
 package logger
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
 	"sync"
+	"sync/atomic"
 
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 
+// ContextFieldsFunc 从 context.Context 中提取需要注入日志的字段。
+// 典型用法：提取 trace_id、request_id 等链路追踪信息。
+type ContextFieldsFunc func(ctx context.Context) []zap.Field
+
 const (
 	defaultPath       = "./logs/"
 	defaultMaxSize    = 512 // MB
-	defaultMaxAge     = 7   // 天
+	defaultMaxAge     = 7   // days
 	defaultMaxBackups = 50
 )
 
-// 包级全局变量.
-// init() 中赋予安全默认值，NewZap() 中替换为正式配置.
 var (
 	baseGlobalLogger = zap.L()
-	globalMu         sync.RWMutex
-
-	zaplog  *zap.Logger
-	sugar   *zap.SugaredLogger
-	undofn  func()
-	closers []io.Closer
+	globalMu         sync.Mutex
+	currentState     atomic.Pointer[loggerState]
 
 	levelMap = map[string]zapcore.Level{
 		"debug":  zapcore.DebugLevel,
@@ -41,45 +44,46 @@ var (
 )
 
 func init() {
-	// 安全默认值：未调用 NewZap 时输出到 stderr，不会 nil panic.
-	var err error
-
-	zaplog, err = zap.NewDevelopment(zap.AddCallerSkip(1))
-	if err != nil {
-		zaplog = zap.NewNop()
-	}
-
-	sugar = zaplog.Sugar()
+	currentState.Store(newFallbackState())
 }
 
 type logConfig struct {
-	consoleStdout bool   // 是否输出到控制台
-	fileStdout    bool   // 是否输出到文件
-	outJSON       bool   // 是否输出为 JSON 格式
-	division      string // 切割方式: "size" 或 "daily"
-	path          string // 日志文件路径前缀
-	compress      bool   // 是否压缩归档文件
-	maxAge        int    // 最大保存天数
-	maxBackups    int    // 最大备份数量
-	maxSize       int    // 单文件最大大小 (MB)
-	level         string // 日志级别
-	messager      Messager
+	consoleStdout     bool
+	fileStdout        bool
+	outJSON           bool
+	division          string
+	path              string
+	compress          bool
+	maxAge            int
+	maxBackups        int
+	maxSize           int
+	level             string
+	messager          Messager
+	messagerQueueSize int
+	contextFields     ContextFieldsFunc
+	channels          map[string]*channelConfig
 }
 
-// NewZap 函数选项模式初始化全局 logger.
-// 可重复调用，会自动清理上一次初始化的资源.
+type channelConfig struct {
+	path               string
+	duplicateToDefault bool
+}
+
+// NewZap initializes the package-level logger. It is safe to call repeatedly.
 func NewZap(opts ...Option) {
 	cfg := &logConfig{
-		consoleStdout: false,
-		fileStdout:    true,
-		outJSON:       false,
-		division:      "size",
-		path:          defaultPath,
-		compress:      true,
-		maxAge:        defaultMaxAge,
-		maxBackups:    defaultMaxBackups,
-		maxSize:       defaultMaxSize,
-		level:         "info",
+		consoleStdout:     false,
+		fileStdout:        true,
+		outJSON:           false,
+		division:          "size",
+		path:              defaultPath,
+		compress:          true,
+		maxAge:            defaultMaxAge,
+		maxBackups:        defaultMaxBackups,
+		maxSize:           defaultMaxSize,
+		level:             "info",
+		messagerQueueSize: 1024,
+		channels:          make(map[string]*channelConfig),
 	}
 
 	for _, o := range opts {
@@ -92,53 +96,13 @@ func NewZap(opts ...Option) {
 }
 
 func initZap(cfg *logConfig) {
-	globalMu.Lock()
-	defer globalMu.Unlock()
-
-	// 清理上一次初始化的资源，防止重复调用 NewZap 导致泄漏.
-	for _, c := range closers {
-		_ = c.Close()
+	state, err := buildLoggerState(cfg)
+	if err != nil {
+		panic(fmt.Sprintf("logger: build logger: %v", err))
 	}
 
-	closers = closers[:0]
-
-	level := getLoggerLevel(cfg.level)
-	encoder := buildEncoder(cfg.outJSON)
-
-	var writers []zapcore.WriteSyncer
-
-	if cfg.consoleStdout {
-		writers = append(writers, zapcore.Lock(os.Stdout))
-	}
-
-	if cfg.fileStdout {
-		ws, cl := buildFileWriter(cfg)
-		writers = append(writers, ws)
-		closers = append(closers, cl...)
-	}
-
-	// 两者都未开启时，至少输出到 stdout，避免静默丢日志.
-	if len(writers) == 0 {
-		writers = append(writers, zapcore.Lock(os.Stdout))
-	}
-
-	msgr = cfg.messager
-
-	core := zapcore.NewCore(
-		encoder,
-		zapcore.NewMultiWriteSyncer(writers...),
-		zap.NewAtomicLevelAt(level),
-	)
-
-	zaplog = zap.New(
-		core,
-		zap.AddCaller(),
-		zap.AddCallerSkip(1),
-		zap.AddStacktrace(zap.ErrorLevel),
-	)
-	sugar = zaplog.Sugar()
-
-	undofn = zap.ReplaceGlobals(zaplog)
+	previous := swapLoggerState(state, true)
+	retireLoggerState(previous)
 }
 
 func getLoggerLevel(lvl string) zapcore.Level {
@@ -149,40 +113,29 @@ func getLoggerLevel(lvl string) zapcore.Level {
 	return zapcore.InfoLevel
 }
 
-// Sync 刷新缓冲区并关闭文件资源.
-// 应在程序退出前调用: defer logger.Sync()
+// Sync flushes buffered logs and closes file resources.
 func Sync() {
-	globalMu.Lock()
-	defer globalMu.Unlock()
-
-	if undofn != nil {
-		undofn()
-	} else {
-		zap.ReplaceGlobals(baseGlobalLogger)
-	}
-
-	_ = zaplog.Sync()
-
-	for _, c := range closers {
-		_ = c.Close()
-	}
+	fallback := newFallbackState()
+	previous := swapLoggerState(fallback, false)
+	retireLoggerState(previous)
 }
 
-// Undo 恢复 zap 全局 logger 到替换前的状态.
+// Undo restores the previous global zap logger.
 func Undo() {
 	globalMu.Lock()
 	defer globalMu.Unlock()
 
-	if undofn != nil {
-		undofn()
+	state := currentState.Load()
+	if state != nil && state.undo != nil {
+		state.undo()
+		state.undo = nil
 		return
 	}
 
 	zap.ReplaceGlobals(baseGlobalLogger)
 }
 
-// buildFileWriter 根据切割方式构建文件 WriteSyncer.
-func buildFileWriter(cfg *logConfig) (zapcore.WriteSyncer, []io.Closer) {
+func buildFileWriter(cfg *logConfig) (zapcore.WriteSyncer, []io.Closer, error) {
 	switch cfg.division {
 	case "daily":
 		return buildDailyWriter(cfg)
@@ -191,10 +144,11 @@ func buildFileWriter(cfg *logConfig) (zapcore.WriteSyncer, []io.Closer) {
 	}
 }
 
-// buildSizeWriter 按大小切割.
-// 文件名格式: {path}-{level}.log
-func buildSizeWriter(cfg *logConfig) (zapcore.WriteSyncer, []io.Closer) {
+func buildSizeWriter(cfg *logConfig) (zapcore.WriteSyncer, []io.Closer, error) {
 	logpath := cfg.path + "-" + cfg.level + ".log"
+	if err := ensureLogDir(logpath); err != nil {
+		return nil, nil, err
+	}
 
 	lj := &lumberjack.Logger{
 		Filename:   logpath,
@@ -205,17 +159,18 @@ func buildSizeWriter(cfg *logConfig) (zapcore.WriteSyncer, []io.Closer) {
 		LocalTime:  true,
 	}
 
-	return zapcore.AddSync(lj), []io.Closer{lj}
+	return zapcore.AddSync(lj), []io.Closer{lj}, nil
 }
 
-// buildDailyWriter 按天切割.
-// 使用 dailyWriteSyncer 在写入时自动检测日期变化并切换文件.
-func buildDailyWriter(cfg *logConfig) (zapcore.WriteSyncer, []io.Closer) {
-	dw := newDailyWriteSyncer(cfg)
-	return zapcore.AddSync(dw), []io.Closer{dw}
+func buildDailyWriter(cfg *logConfig) (zapcore.WriteSyncer, []io.Closer, error) {
+	dw, err := newDailyWriteSyncer(cfg)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return zapcore.AddSync(dw), []io.Closer{dw}, nil
 }
 
-// buildEncoder 构建日志编码器.
 func buildEncoder(outJSON bool) zapcore.Encoder {
 	ec := zap.NewProductionEncoderConfig()
 
@@ -237,4 +192,177 @@ func buildEncoder(outJSON bool) zapcore.Encoder {
 	}
 
 	return zapcore.NewConsoleEncoder(ec)
+}
+
+func buildLoggerState(cfg *logConfig) (*loggerState, error) {
+	atomicLevel := zap.NewAtomicLevelAt(getLoggerLevel(cfg.level))
+
+	defaultCore, defaultClosers, err := buildCore(cfg, atomicLevel)
+	if err != nil {
+		return nil, err
+	}
+
+	allClosers := append([]io.Closer{}, defaultClosers...)
+	root := newZapLogger(defaultCore)
+	channelBases := make(map[string]*zap.Logger, len(cfg.channels))
+
+	for name, channelCfg := range cfg.channels {
+		if err := validateChannelRoute(cfg, name, channelCfg); err != nil {
+			closeClosers(allClosers)
+			return nil, err
+		}
+
+		channelCore, channelClosers, buildErr := buildChannelCore(cfg, channelCfg, atomicLevel)
+		if buildErr != nil {
+			closeClosers(allClosers)
+			return nil, buildErr
+		}
+
+		allClosers = append(allClosers, channelClosers...)
+
+		routedCore := channelCore
+		if channelCfg.duplicateToDefault {
+			routedCore = zapcore.NewTee(defaultCore, channelCore)
+		}
+
+		channelBases[name] = newZapLogger(routedCore).With(zap.String("channel", name))
+	}
+
+	var msgr Messager
+	var asyncMsg *asyncMessager
+	if cfg.messager != nil {
+		asyncMsg = newAsyncMessager(cfg.messager, cfg.messagerQueueSize)
+		msgr = asyncMsg
+	}
+
+	return newLoggerState(root, channelBases, allClosers, msgr, asyncMsg, cfg.contextFields, atomicLevel), nil
+}
+
+func buildCore(cfg *logConfig, lvl zap.AtomicLevel) (zapcore.Core, []io.Closer, error) {
+	var (
+		writers []zapcore.WriteSyncer
+		closers []io.Closer
+	)
+
+	if cfg.consoleStdout {
+		writers = append(writers, zapcore.Lock(os.Stdout))
+	}
+
+	if cfg.fileStdout {
+		ws, cl, err := buildFileWriter(cfg)
+		if err != nil {
+			return nil, nil, err
+		}
+		writers = append(writers, ws)
+		closers = append(closers, cl...)
+	}
+
+	if len(writers) == 0 {
+		writers = append(writers, zapcore.Lock(os.Stdout))
+	}
+
+	core := zapcore.NewCore(
+		buildEncoder(cfg.outJSON),
+		zapcore.NewMultiWriteSyncer(writers...),
+		lvl,
+	)
+
+	return core, closers, nil
+}
+
+func buildChannelCore(root *logConfig, channel *channelConfig, lvl zap.AtomicLevel) (zapcore.Core, []io.Closer, error) {
+	cfg := *root
+	cfg.consoleStdout = false
+	cfg.fileStdout = true
+	cfg.path = channel.path
+	cfg.channels = nil
+
+	return buildCore(&cfg, lvl)
+}
+
+func newZapLogger(core zapcore.Core) *zap.Logger {
+	return zap.New(
+		core,
+		zap.AddCaller(),
+		zap.AddCallerSkip(1),
+		zap.AddStacktrace(zap.ErrorLevel),
+	)
+}
+
+func newFallbackState() *loggerState {
+	logger, err := zap.NewDevelopment(zap.AddCallerSkip(1))
+	if err != nil {
+		logger = zap.NewNop()
+	}
+
+	return newLoggerState(logger, nil, nil, nil, nil, nil, zap.NewAtomicLevelAt(zapcore.DebugLevel))
+}
+
+func swapLoggerState(next *loggerState, replaceGlobals bool) *loggerState {
+	globalMu.Lock()
+	defer globalMu.Unlock()
+
+	previous := currentState.Swap(next)
+	if previous != nil && previous.undo != nil {
+		previous.undo()
+		previous.undo = nil
+	} else if previous == nil && !replaceGlobals {
+		zap.ReplaceGlobals(baseGlobalLogger)
+	}
+
+	if replaceGlobals {
+		next.undo = zap.ReplaceGlobals(next.root)
+	}
+
+	return previous
+}
+
+func retireLoggerState(state *loggerState) {
+	if state == nil {
+		return
+	}
+
+	state.retire()
+	state.wait()
+	state.closeResources()
+}
+
+func ensureLogDir(logpath string) error {
+	dir := filepath.Dir(logpath)
+	if dir == "." || dir == "" {
+		return nil
+	}
+
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("logger: create log dir %q: %w", dir, err)
+	}
+	return nil
+}
+
+func closeClosers(closers []io.Closer) {
+	for _, c := range closers {
+		_ = c.Close()
+	}
+}
+
+func validateChannelRoute(root *logConfig, name string, channel *channelConfig) error {
+	if !channel.duplicateToDefault {
+		return nil
+	}
+
+	if sameLogPath(root.path, channel.path) {
+		return fmt.Errorf("logger: channel %q path must differ from default path when duplicate-to-default is enabled", name)
+	}
+
+	return nil
+}
+
+func sameLogPath(left, right string) bool {
+	cleanLeft := filepath.Clean(left)
+	cleanRight := filepath.Clean(right)
+	if runtime.GOOS == "windows" {
+		return strings.EqualFold(cleanLeft, cleanRight)
+	}
+
+	return cleanLeft == cleanRight
 }

@@ -4,6 +4,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
 	"sync"
 	"time"
 
@@ -12,10 +15,19 @@ import (
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 
+type channelRoute struct {
+	logger *zap.Logger
+}
+
 type lifecycleState struct {
-	root    *zap.Logger
-	undo    func()
-	closers []io.Closer
+	root                *zap.Logger
+	undo                func()
+	closers             []io.Closer
+	asyncMsg            *asyncMessager
+	atomicLevel         zap.AtomicLevel
+	channelRoutes       map[string]*channelRoute
+	rootChannels        map[string]*Logger
+	dynamicChannelBases sync.Map
 
 	undoOnce  sync.Once
 	closeOnce sync.Once
@@ -40,6 +52,9 @@ func (s *lifecycleState) Sync() {
 
 	s.closeOnce.Do(func() {
 		s.Undo()
+		if s.asyncMsg != nil {
+			s.asyncMsg.close()
+		}
 		if s.root != nil {
 			_ = s.root.Sync()
 		}
@@ -49,26 +64,18 @@ func (s *lifecycleState) Sync() {
 	})
 }
 
-// Logger 封装 zap.Logger，提供 Structured 和 Sugar 双模式日志.
-// 通过 New 或 MustNew 创建实例.
 type Logger struct {
-	zap      *zap.Logger
-	sugar    *zap.SugaredLogger
-	state    *lifecycleState
-	messager Messager
+	base          *zap.Logger
+	zap           *zap.Logger
+	sugar         *zap.SugaredLogger
+	state         *lifecycleState
+	messager      Messager
+	contextFields ContextFieldsFunc
+	channel       string
+	name          string
+	fields        []zap.Field
 }
 
-// New 创建 Logger 实例.
-//
-//	log, err := logger.New(
-//	    logger.WithPath("./logs/app"),
-//	    logger.WithLevel("info"),
-//	    logger.WithOutJSON(true),
-//	)
-//	if err != nil {
-//	    panic(err)
-//	}
-//	defer log.Sync()
 func New(opts ...Option) (*Logger, error) {
 	cfg := defaultConfig()
 	for _, opt := range opts {
@@ -80,8 +87,6 @@ func New(opts ...Option) (*Logger, error) {
 	return build(cfg)
 }
 
-// MustNew 同 New，但配置错误时 panic.
-// 适用于 main 函数中初始化.
 func MustNew(opts ...Option) *Logger {
 	l, err := New(opts...)
 	if err != nil {
@@ -91,78 +96,71 @@ func MustNew(opts ...Option) *Logger {
 	return l
 }
 
-// build 根据配置构建 Logger.
 func build(cfg *Config) (*Logger, error) {
-	level, ok := levelMap[cfg.level]
-	if !ok {
-		level = zapcore.InfoLevel
+	built, err := buildLoggerSet(cfg)
+	if err != nil {
+		return nil, err
 	}
 
-	encoder := buildEncoder(cfg.outJSON)
-
-	var (
-		writers []zapcore.WriteSyncer
-		closers []io.Closer
-	)
-
-	if cfg.consoleStdout {
-		writers = append(writers, zapcore.Lock(os.Stdout))
+	var msgr Messager
+	var asyncMsg *asyncMessager
+	if cfg.messager != nil {
+		asyncMsg = newAsyncMessager(cfg.messager, cfg.messagerQueueSize)
+		msgr = asyncMsg
 	}
 
-	if cfg.fileStdout {
-		ws, cl := buildFileWriter(cfg)
-		writers = append(writers, ws)
-		closers = append(closers, cl...)
+	undo := zap.ReplaceGlobals(built.root)
+	state := &lifecycleState{
+		root:          built.root,
+		undo:          undo,
+		closers:       built.closers,
+		asyncMsg:      asyncMsg,
+		atomicLevel:   built.atomicLevel,
+		channelRoutes: built.channelRoutes,
+		rootChannels:  make(map[string]*Logger, len(built.channelRoutes)),
 	}
 
-	// 两者都未开启时，至少输出到 stdout，避免静默丢日志.
-	if len(writers) == 0 {
-		writers = append(writers, zapcore.Lock(os.Stdout))
+	rootLogger := &Logger{
+		base:          built.root,
+		zap:           built.root,
+		sugar:         built.root.Sugar(),
+		state:         state,
+		messager:      msgr,
+		contextFields: cfg.contextFields,
+	}
+	for name, route := range built.channelRoutes {
+		state.rootChannels[name] = &Logger{
+			base:          built.root,
+			zap:           route.logger,
+			sugar:         route.logger.Sugar(),
+			state:         state,
+			messager:      msgr,
+			contextFields: cfg.contextFields,
+			channel:       name,
+		}
 	}
 
-	core := zapcore.NewCore(
-		encoder,
-		zapcore.NewMultiWriteSyncer(writers...),
-		zap.NewAtomicLevelAt(level),
-	)
-
-	// CallerSkip(1): 跳过本包的封装层，显示调用者真实位置.
-	zlog := zap.New(
-		core,
-		zap.AddCaller(),
-		zap.AddCallerSkip(1),
-		zap.AddStacktrace(zap.ErrorLevel),
-	)
-
-	undo := zap.ReplaceGlobals(zlog)
-
-	return &Logger{
-		zap:   zlog,
-		sugar: zlog.Sugar(),
-		state: &lifecycleState{
-			root:    zlog,
-			undo:    undo,
-			closers: closers,
-		},
-		messager: cfg.messager,
-	}, nil
+	return rootLogger, nil
 }
 
-// buildFileWriter 根据切割方式构建文件 WriteSyncer.
-func buildFileWriter(cfg *Config) (zapcore.WriteSyncer, []io.Closer) {
+func buildFileWriter(cfg *Config) (zapcore.WriteSyncer, []io.Closer, error) {
 	switch cfg.division {
 	case "daily":
-		dw := newDailyWriteSyncer(cfg)
-		return zapcore.AddSync(dw), []io.Closer{dw}
+		dw, err := newDailyWriteSyncer(cfg)
+		if err != nil {
+			return nil, nil, err
+		}
+		return zapcore.AddSync(dw), []io.Closer{dw}, nil
 	default:
 		return buildSizeWriter(cfg)
 	}
 }
 
-// buildSizeWriter 按大小切割.
-// 文件名格式: {path}-{level}.log
-func buildSizeWriter(cfg *Config) (zapcore.WriteSyncer, []io.Closer) {
+func buildSizeWriter(cfg *Config) (zapcore.WriteSyncer, []io.Closer, error) {
 	logpath := cfg.path + "-" + cfg.level + ".log"
+	if err := ensureLogDir(logpath); err != nil {
+		return nil, nil, err
+	}
 
 	lj := &lumberjack.Logger{
 		Filename:   logpath,
@@ -173,10 +171,9 @@ func buildSizeWriter(cfg *Config) (zapcore.WriteSyncer, []io.Closer) {
 		LocalTime:  true,
 	}
 
-	return zapcore.AddSync(lj), []io.Closer{lj}
+	return zapcore.AddSync(lj), []io.Closer{lj}, nil
 }
 
-// buildEncoder 构建日志编码器.
 func buildEncoder(outJSON bool) zapcore.Encoder {
 	ec := zap.NewProductionEncoderConfig()
 
@@ -200,4 +197,147 @@ func buildEncoder(outJSON bool) zapcore.Encoder {
 	}
 
 	return zapcore.NewConsoleEncoder(ec)
+}
+
+type builtLoggerSet struct {
+	root          *zap.Logger
+	closers       []io.Closer
+	atomicLevel   zap.AtomicLevel
+	channelRoutes map[string]*channelRoute
+}
+
+func buildLoggerSet(cfg *Config) (*builtLoggerSet, error) {
+	level, ok := levelMap[cfg.level]
+	if !ok {
+		level = zapcore.InfoLevel
+	}
+	atomicLevel := zap.NewAtomicLevelAt(level)
+
+	defaultCore, defaultClosers, err := buildCore(cfg, atomicLevel)
+	if err != nil {
+		return nil, err
+	}
+
+	allClosers := append([]io.Closer{}, defaultClosers...)
+	channelRoutes := make(map[string]*channelRoute, len(cfg.channels))
+
+	for name, channelCfg := range cfg.channels {
+		if err := validateChannelRoute(cfg, name, channelCfg); err != nil {
+			closeClosers(allClosers)
+			return nil, err
+		}
+
+		channelCore, channelClosers, buildErr := buildChannelCore(cfg, channelCfg, atomicLevel)
+		if buildErr != nil {
+			closeClosers(allClosers)
+			return nil, buildErr
+		}
+
+		allClosers = append(allClosers, channelClosers...)
+		routedCore := channelCore
+		if channelCfg.duplicateToDefault {
+			routedCore = zapcore.NewTee(defaultCore, channelCore)
+		}
+		channelRoutes[name] = &channelRoute{
+			logger: newZapLogger(routedCore).With(zap.String("channel", name)),
+		}
+	}
+
+	return &builtLoggerSet{
+		root:          newZapLogger(defaultCore),
+		closers:       allClosers,
+		atomicLevel:   atomicLevel,
+		channelRoutes: channelRoutes,
+	}, nil
+}
+
+func buildCore(cfg *Config, lvl zap.AtomicLevel) (zapcore.Core, []io.Closer, error) {
+	var (
+		writers []zapcore.WriteSyncer
+		closers []io.Closer
+	)
+
+	if cfg.consoleStdout {
+		writers = append(writers, zapcore.Lock(os.Stdout))
+	}
+
+	if cfg.fileStdout {
+		ws, cl, err := buildFileWriter(cfg)
+		if err != nil {
+			return nil, nil, err
+		}
+		writers = append(writers, ws)
+		closers = append(closers, cl...)
+	}
+
+	if len(writers) == 0 {
+		writers = append(writers, zapcore.Lock(os.Stdout))
+	}
+
+	core := zapcore.NewCore(
+		buildEncoder(cfg.outJSON),
+		zapcore.NewMultiWriteSyncer(writers...),
+		lvl,
+	)
+
+	return core, closers, nil
+}
+
+func buildChannelCore(root *Config, channel *channelConfig, lvl zap.AtomicLevel) (zapcore.Core, []io.Closer, error) {
+	cfg := *root
+	cfg.consoleStdout = false
+	cfg.fileStdout = true
+	cfg.path = channel.path
+	cfg.channels = nil
+
+	return buildCore(&cfg, lvl)
+}
+
+func newZapLogger(core zapcore.Core) *zap.Logger {
+	return zap.New(
+		core,
+		zap.AddCaller(),
+		zap.AddCallerSkip(1),
+		zap.AddStacktrace(zap.ErrorLevel),
+	)
+}
+
+func ensureLogDir(logpath string) error {
+	dir := filepath.Dir(logpath)
+	if dir == "." || dir == "" {
+		return nil
+	}
+
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("logger: create log dir %q: %w", dir, err)
+	}
+	return nil
+}
+
+func closeClosers(closers []io.Closer) {
+	for _, c := range closers {
+		_ = c.Close()
+	}
+}
+
+func validateChannelRoute(root *Config, name string, channel *channelConfig) error {
+	if !channel.duplicateToDefault {
+		return nil
+	}
+
+	if sameLogPath(root.path, channel.path) {
+		return fmt.Errorf("logger: channel %q path must differ from default path when duplicate-to-default is enabled", name)
+	}
+
+	return nil
+}
+
+func sameLogPath(left, right string) bool {
+	cleanLeft := filepath.Clean(left)
+	cleanRight := filepath.Clean(right)
+	if runtime.GOOS == "windows" {
+		return strings.EqualFold(cleanLeft, cleanRight)
+	}
+
+	return cleanLeft == cleanRight
 }

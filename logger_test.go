@@ -127,3 +127,19 @@ func TestInvalidOptionPanics(t *testing.T) {
 		logger.WithLevel("invalid_level"),
 	)
 }
+
+func TestInvalidChannelOptionPanics(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic on invalid channel option")
+		}
+	}()
+
+	logger.NewZap(
+		logger.WithPath("./testlogs/app"),
+		logger.WithChannel("order",
+			logger.WithChannelPath("./testlogs/app"),
+			logger.WithChannelDuplicateToDefault(true),
+		),
+	)
+}
