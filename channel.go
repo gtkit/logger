@@ -131,6 +131,15 @@ func (l *ChannelLogger) Infof(format string, args ...any) {
 	l.derive(state).Sugar().Infof(format, args...)
 }
 
+func (l *ChannelLogger) Debugw(msg string, keysAndValues ...any) {
+	state := currentLoggerState()
+	if state == nil {
+		return
+	}
+	defer state.release()
+	l.derive(state).Sugar().Debugw(msg, keysAndValues...)
+}
+
 func (l *ChannelLogger) Infow(msg string, keysAndValues ...any) {
 	state := currentLoggerState()
 	if state == nil {
@@ -138,6 +147,24 @@ func (l *ChannelLogger) Infow(msg string, keysAndValues ...any) {
 	}
 	defer state.release()
 	l.derive(state).Sugar().Infow(msg, keysAndValues...)
+}
+
+func (l *ChannelLogger) Warnw(msg string, keysAndValues ...any) {
+	state := currentLoggerState()
+	if state == nil {
+		return
+	}
+	defer state.release()
+	l.derive(state).Sugar().Warnw(msg, keysAndValues...)
+}
+
+func (l *ChannelLogger) Errorw(msg string, keysAndValues ...any) {
+	state := currentLoggerState()
+	if state == nil {
+		return
+	}
+	defer state.release()
+	l.derive(state).Sugar().Errorw(msg, keysAndValues...)
 }
 
 func (l *ChannelLogger) Warnf(format string, args ...any) {

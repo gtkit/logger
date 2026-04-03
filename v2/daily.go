@@ -2,6 +2,7 @@ package logger
 
 import (
 	"fmt"
+	"os"
 	"sync"
 	"time"
 
@@ -52,10 +53,12 @@ func (d *dailyWriteSyncer) Write(p []byte) (int, error) {
 	now := time.Now()
 	currentDate := now.Format(time.DateOnly)
 	if currentDate != d.currentDate {
-		_ = d.lj.Close()
 		next, err := newLumberjack(d.cfg, now)
 		if err != nil {
 			return 0, err
+		}
+		if err := d.lj.Close(); err != nil {
+			fmt.Fprintf(os.Stderr, "logger: close rotated daily file: %v\n", err)
 		}
 		d.lj = next
 		d.currentDate = currentDate

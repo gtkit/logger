@@ -146,6 +146,15 @@ func Infof(format string, args ...any) {
 	state.sugar.Infof(format, args...)
 }
 
+func Debugw(msg string, keysAndValues ...any) {
+	state := currentLoggerState()
+	if state == nil {
+		return
+	}
+	defer state.release()
+	state.sugar.Debugw(msg, keysAndValues...)
+}
+
 func Infow(msg string, keysAndValues ...any) {
 	state := currentLoggerState()
 	if state == nil {
@@ -153,6 +162,24 @@ func Infow(msg string, keysAndValues ...any) {
 	}
 	defer state.release()
 	state.sugar.Infow(msg, keysAndValues...)
+}
+
+func Warnw(msg string, keysAndValues ...any) {
+	state := currentLoggerState()
+	if state == nil {
+		return
+	}
+	defer state.release()
+	state.sugar.Warnw(msg, keysAndValues...)
+}
+
+func Errorw(msg string, keysAndValues ...any) {
+	state := currentLoggerState()
+	if state == nil {
+		return
+	}
+	defer state.release()
+	state.sugar.Errorw(msg, keysAndValues...)
 }
 
 func Warnf(format string, args ...any) {

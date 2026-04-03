@@ -69,8 +69,9 @@ type channelConfig struct {
 	duplicateToDefault bool
 }
 
-// NewZap initializes the package-level logger. It is safe to call repeatedly.
-func NewZap(opts ...Option) {
+// New initializes the package-level logger, returning an error on failure.
+// It is safe to call repeatedly.
+func New(opts ...Option) error {
 	cfg := &logConfig{
 		consoleStdout:     false,
 		fileStdout:        true,
@@ -88,21 +89,26 @@ func NewZap(opts ...Option) {
 
 	for _, o := range opts {
 		if err := o(cfg); err != nil {
-			panic(fmt.Sprintf("logger: apply option: %v", err))
+			return fmt.Errorf("logger: apply option: %w", err)
 		}
 	}
 
-	initZap(cfg)
-}
-
-func initZap(cfg *logConfig) {
 	state, err := buildLoggerState(cfg)
 	if err != nil {
-		panic(fmt.Sprintf("logger: build logger: %v", err))
+		return err
 	}
 
 	previous := swapLoggerState(state, true)
 	retireLoggerState(previous)
+	return nil
+}
+
+// NewZap initializes the package-level logger. It panics on failure.
+// It is safe to call repeatedly.
+func NewZap(opts ...Option) {
+	if err := New(opts...); err != nil {
+		panic(err)
+	}
 }
 
 func getLoggerLevel(lvl string) zapcore.Level {
@@ -341,7 +347,9 @@ func ensureLogDir(logpath string) error {
 
 func closeClosers(closers []io.Closer) {
 	for _, c := range closers {
-		_ = c.Close()
+		if err := c.Close(); err != nil {
+			fmt.Fprintf(os.Stderr, "logger: close resource: %v\n", err)
+		}
 	}
 }
 

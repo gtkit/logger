@@ -467,12 +467,12 @@ func TestAsyncMessagerCloseDrainsQueue(t *testing.T) {
 func TestAsyncMessagerQueueFullDrops(t *testing.T) {
 	// blockingMessager blocks on each Send to fill the queue.
 	blocker := make(chan struct{})
-	inner := &blockingMessager{block: blocker}
+	inner := &blockingMessager{block: blocker, started: make(chan struct{})}
 	am := newAsyncMessager(inner, 1)
 
 	// The worker goroutine is blocked on the first message.
-	am.Send("first") // picked up by worker, worker blocks
-	time.Sleep(50 * time.Millisecond)
+	am.Send("first")  // picked up by worker, worker blocks
+	<-inner.started    // wait for goroutine to start processing
 	am.Send("fill-queue") // fills the queue (size=1)
 	am.Send("dropped")    // should be silently dropped
 
@@ -483,16 +483,20 @@ func TestAsyncMessagerQueueFullDrops(t *testing.T) {
 }
 
 type blockingMessager struct {
-	block chan struct{}
-	count atomic.Int64
+	block       chan struct{}
+	started     chan struct{}
+	startedOnce sync.Once
+	count       atomic.Int64
 }
 
 func (m *blockingMessager) Send(msg string) {
+	m.startedOnce.Do(func() { close(m.started) })
 	<-m.block
 	m.count.Add(1)
 }
 
 func (m *blockingMessager) SendTo(url, msg string) {
+	m.startedOnce.Do(func() { close(m.started) })
 	<-m.block
 	m.count.Add(1)
 }
@@ -1260,7 +1264,7 @@ func TestDroppedMessagesCountsDrops(t *testing.T) {
 	logpath := filepath.Join(dir, "app")
 
 	blocker := make(chan struct{})
-	inner := &blockingMessager{block: blocker}
+	inner := &blockingMessager{block: blocker, started: make(chan struct{})}
 
 	NewZap(
 		WithConsole(false),
@@ -1272,15 +1276,13 @@ func TestDroppedMessagesCountsDrops(t *testing.T) {
 
 	// First message is picked up by the worker goroutine, which blocks.
 	HInfo("first")
-	time.Sleep(50 * time.Millisecond)
+	<-inner.started // wait for goroutine to start processing
 
 	// Second message fills the queue (size=1).
 	HInfo("fill-queue")
 
 	// Third message should be dropped.
 	HInfo("dropped")
-
-	time.Sleep(50 * time.Millisecond)
 
 	got := DroppedMessages()
 	if got < 1 {
@@ -1289,4 +1291,153 @@ func TestDroppedMessagesCountsDrops(t *testing.T) {
 
 	close(blocker)
 	Sync()
+}
+
+// ---------------------------------------------------------------------------
+// 18. New() returns error instead of panicking
+// ---------------------------------------------------------------------------
+
+func TestNewReturnsNilOnSuccess(t *testing.T) {
+	err := New(WithConsole(false), WithFile(false))
+	if err != nil {
+		t.Fatalf("New() returned unexpected error: %v", err)
+	}
+	defer Sync()
+}
+
+func TestNewReturnsErrorOnInvalidOption(t *testing.T) {
+	err := New(WithLevel("nonexistent"))
+	if err == nil {
+		t.Fatal("New() should return error for invalid level")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 19. Debugw / Warnw / Errorw (package-level)
+// ---------------------------------------------------------------------------
+
+func TestDebugwWarnwErrorw(t *testing.T) {
+	dir := t.TempDir()
+	logpath := filepath.Join(dir, "app")
+
+	NewZap(
+		WithConsole(false),
+		WithFile(true),
+		WithOutJSON(true),
+		WithPath(logpath),
+		WithLevel("debug"),
+	)
+	defer Sync()
+
+	Debugw("debugw-msg", "key1", "val1")
+	Warnw("warnw-msg", "key2", "val2")
+	Errorw("errorw-msg", "key3", "val3")
+
+	content := readLogFile(t, logpath+"-debug.log")
+	for _, msg := range []string{"debugw-msg", "warnw-msg", "errorw-msg"} {
+		if !strings.Contains(content, msg) {
+			t.Fatalf("log missing %q: %s", msg, content)
+		}
+	}
+	for _, kv := range []string{"key1", "val1", "key2", "val2", "key3", "val3"} {
+		if !strings.Contains(content, kv) {
+			t.Fatalf("log missing kv %q: %s", kv, content)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 20. Channel Debugw / Warnw / Errorw
+// ---------------------------------------------------------------------------
+
+func TestChannelDebugwWarnwErrorw(t *testing.T) {
+	dir := t.TempDir()
+	defaultPath := filepath.Join(dir, "default", "app")
+	channelPath := filepath.Join(dir, "channels", "test", "test")
+
+	NewZap(
+		WithConsole(false),
+		WithFile(true),
+		WithOutJSON(true),
+		WithPath(defaultPath),
+		WithLevel("debug"),
+		WithChannel("test",
+			WithChannelPath(channelPath),
+			WithChannelDuplicateToDefault(false),
+		),
+	)
+	defer Sync()
+
+	ch := Channel("test")
+	ch.Debugw("ch-debugw", "k1", "v1")
+	ch.Warnw("ch-warnw", "k2", "v2")
+	ch.Errorw("ch-errorw", "k3", "v3")
+
+	content := readLogFile(t, channelPath+"-debug.log")
+	for _, msg := range []string{"ch-debugw", "ch-warnw", "ch-errorw"} {
+		if !strings.Contains(content, msg) {
+			t.Fatalf("channel log missing %q: %s", msg, content)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 21. slog KindGroup recursive handling
+// ---------------------------------------------------------------------------
+
+func TestSlogHandlerGroupAttr(t *testing.T) {
+	dir := t.TempDir()
+	logpath := filepath.Join(dir, "app")
+
+	NewZap(
+		WithConsole(false),
+		WithFile(true),
+		WithOutJSON(true),
+		WithPath(logpath),
+		WithLevel("info"),
+	)
+	defer Sync()
+
+	sl := slog.New(SlogHandler())
+	sl.Info("group-test",
+		slog.Group("request",
+			slog.String("method", "POST"),
+			slog.Int("status", 201),
+		),
+	)
+
+	content := readLogFile(t, logpath+"-info.log")
+	if !strings.Contains(content, "group-test") {
+		t.Fatalf("slog group message not found: %s", content)
+	}
+	if !strings.Contains(content, "request") {
+		t.Fatalf("slog group key 'request' not found: %s", content)
+	}
+	if !strings.Contains(content, "method") {
+		t.Fatalf("slog group nested field 'method' not found: %s", content)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 22. Dynamic channel cache limit
+// ---------------------------------------------------------------------------
+
+func TestDynamicChannelCacheLimit(t *testing.T) {
+	NewZap(WithConsole(false), WithFile(false))
+	defer Sync()
+
+	state := snapshotLoggerState()
+	if state == nil {
+		t.Fatal("state is nil")
+	}
+
+	// 写入超过上限的动态 channel
+	for i := range maxDynamicChannels + 100 {
+		name := fmt.Sprintf("dyn-ch-%d", i)
+		Channel(name).Info("test")
+	}
+
+	if got := state.dynamicChannelCnt.Load(); got > maxDynamicChannels {
+		t.Fatalf("dynamic channel count = %d, should not exceed %d", got, maxDynamicChannels)
+	}
 }

@@ -2,11 +2,13 @@ package logger
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -384,12 +386,12 @@ func TestAsyncMessager_NonBlocking(t *testing.T) {
 
 func TestAsyncMessager_QueueFullDropsSilently(t *testing.T) {
 	// Use a blocking inner to fill the queue
-	blocker := &blockingMessager{block: make(chan struct{})}
+	blocker := &blockingMessager{block: make(chan struct{}), started: make(chan struct{})}
 	am := newAsyncMessager(blocker, 2)
 
 	// Fill the queue: first item is being processed (blocked), next 2 fill the buffer
 	am.Send("1")
-	time.Sleep(10 * time.Millisecond) // let goroutine pick up first item
+	<-blocker.started // wait for goroutine to start processing
 	am.Send("2")
 	am.Send("3")
 	// This one should be silently dropped (queue full)
@@ -402,14 +404,22 @@ func TestAsyncMessager_QueueFullDropsSilently(t *testing.T) {
 }
 
 type blockingMessager struct {
-	block chan struct{}
+	block       chan struct{}
+	started     chan struct{}
+	startedOnce sync.Once
 }
 
 func (m *blockingMessager) Send(msg string) {
+	if m.started != nil {
+		m.startedOnce.Do(func() { close(m.started) })
+	}
 	<-m.block
 }
 
 func (m *blockingMessager) SendTo(url, msg string) {
+	if m.started != nil {
+		m.startedOnce.Do(func() { close(m.started) })
+	}
 	<-m.block
 }
 
@@ -909,7 +919,7 @@ func TestDroppedMessages_ZeroWithoutMessager(t *testing.T) {
 }
 
 func TestDroppedMessages_CountsDrops(t *testing.T) {
-	blocker := &blockingMessager{block: make(chan struct{})}
+	blocker := &blockingMessager{block: make(chan struct{}), started: make(chan struct{})}
 
 	tempDir := t.TempDir()
 	path := filepath.Join(tempDir, "logs", "app")
@@ -925,7 +935,7 @@ func TestDroppedMessages_CountsDrops(t *testing.T) {
 
 	// First HInfo is picked up by the goroutine and blocks on blocker.
 	l.HInfo("msg-1")
-	time.Sleep(20 * time.Millisecond) // let goroutine pick up msg-1
+	<-blocker.started // wait for goroutine to start processing
 
 	// Fill the queue buffer (size=2).
 	l.HInfo("msg-2")
@@ -943,4 +953,125 @@ func TestDroppedMessages_CountsDrops(t *testing.T) {
 	// Unblock and clean up.
 	close(blocker.block)
 	l.Sync()
+}
+
+// ============================================================
+// Debugw / Warnw / Errorw tests
+// ============================================================
+
+func TestDebugwWarnwErrorw(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "logs", "app")
+
+	l := MustNew(
+		WithConsole(false),
+		WithFile(true),
+		WithOutJSON(true),
+		WithPath(path),
+		WithLevel("debug"),
+	)
+	defer l.Sync()
+
+	l.Debugw("debugw-msg", "key1", "val1")
+	l.Warnw("warnw-msg", "key2", "val2")
+	l.Errorw("errorw-msg", "key3", "val3")
+
+	content := readLogFile(t, path+"-debug.log")
+	for _, msg := range []string{"debugw-msg", "warnw-msg", "errorw-msg"} {
+		if !strings.Contains(content, msg) {
+			t.Fatalf("log missing %q: %s", msg, content)
+		}
+	}
+	for _, kv := range []string{"key1", "val1", "key2", "val2", "key3", "val3"} {
+		if !strings.Contains(content, kv) {
+			t.Fatalf("log missing kv %q: %s", kv, content)
+		}
+	}
+}
+
+// ============================================================
+// Adapter nil Logger panic tests
+// ============================================================
+
+func TestNewCronAdapterPanicsOnNil(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("NewCronAdapter(nil) should panic")
+		}
+	}()
+	NewCronAdapter(nil)
+}
+
+func TestNewESAdapterPanicsOnNil(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("NewESAdapter(nil) should panic")
+		}
+	}()
+	NewESAdapter(nil)
+}
+
+func TestNewRestyAdapterPanicsOnNil(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("NewRestyAdapter(nil) should panic")
+		}
+	}()
+	NewRestyAdapter(nil)
+}
+
+// ============================================================
+// slog KindGroup recursive handling
+// ============================================================
+
+func TestSlogHandlerGroupAttr(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "logs", "app")
+
+	l := MustNew(
+		WithConsole(false),
+		WithFile(true),
+		WithOutJSON(true),
+		WithPath(path),
+		WithLevel("info"),
+	)
+	defer l.Sync()
+
+	sl := slog.New(l.SlogHandler())
+	sl.Info("group-test",
+		slog.Group("request",
+			slog.String("method", "POST"),
+			slog.Int("status", 201),
+		),
+	)
+
+	content := readLogFile(t, path+"-info.log")
+	if !strings.Contains(content, "group-test") {
+		t.Fatalf("slog group message not found: %s", content)
+	}
+	if !strings.Contains(content, "request") {
+		t.Fatalf("slog group key 'request' not found: %s", content)
+	}
+	if !strings.Contains(content, "method") {
+		t.Fatalf("slog group nested field 'method' not found: %s", content)
+	}
+}
+
+// ============================================================
+// Dynamic channel cache limit
+// ============================================================
+
+func TestDynamicChannelCacheLimit(t *testing.T) {
+	l := MustNew(WithConsole(false), WithFile(false))
+	defer l.Sync()
+
+	// 写入超过上限的动态 channel
+	for i := range maxDynamicChannels + 100 {
+		name := fmt.Sprintf("dyn-ch-%d", i)
+		l.Channel(name).Info("test")
+	}
+
+	if got := l.state.dynamicChannelBasesCnt.Load(); got > maxDynamicChannels {
+		t.Fatalf("dynamic channel count = %d, should not exceed %d", got, maxDynamicChannels)
+	}
 }

@@ -179,6 +179,8 @@ es, _ := elasticsearch.NewClient(elasticsearch.Config{
 client := resty.New().SetLogger(logger.NewRestyAdapter(log))
 ```
 
+注意：适配器参数 `log` 不能为 nil，否则会 panic。
+
 ## 消息推送
 
 ```go
@@ -192,6 +194,52 @@ log := logger.MustNew(
 )
 
 log.HError("payment failed", zap.String("order_id", "12345"))
+```
+
+## slog 桥接
+
+将 Go 标准库 `log/slog` 的日志统一写入 zap，适用于第三方库使用 slog 输出日志的场景：
+
+```go
+import "log/slog"
+
+slog.SetDefault(slog.New(log.SlogHandler()))
+
+// 之后所有 slog 调用都会写入 zap 管道
+slog.Info("third-party log", "key", "value")
+
+// 支持 slog.Group 嵌套结构
+slog.Info("request",
+	slog.Group("request",
+		slog.String("method", "POST"),
+		slog.Int("status", 201),
+	),
+)
+```
+
+## API 方法一览
+
+### Structured（高性能，类型安全）
+
+`Debug`、`Info`、`Warn`、`Error`、`DPanic`、`Panic`、`Fatal`
+
+### Sugar — fmt 风格
+
+`Debugf`、`Infof`、`Warnf`、`Errorf`、`DPanicf`、`Panicf`、`Fatalf`
+
+### Sugar — key-value 风格
+
+`Debugw`、`Infow`、`Warnw`、`Errorw`
+
+```go
+log.Infow("request processed", "method", "GET", "status", 200)
+log.Errorw("query failed", "table", "orders", "err", err)
+```
+
+以上所有方法在 `Channel` 上同样可用：
+
+```go
+log.Channel("order").Infow("created", "order_id", "A100")
 ```
 
 ## 使用 Channel 的利弊

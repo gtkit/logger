@@ -14,8 +14,11 @@ type CronAdapter struct {
 	log *Logger
 }
 
-// NewCronAdapter 创建 Cron 日志适配器.
+// NewCronAdapter 创建 Cron 日志适配器。l 不能为 nil，否则 panic。
 func NewCronAdapter(l *Logger) *CronAdapter {
+	if l == nil {
+		panic("logger: NewCronAdapter requires a non-nil Logger")
+	}
 	return &CronAdapter{log: l}
 }
 
@@ -80,8 +83,11 @@ type ESAdapter struct {
 	log *Logger
 }
 
-// NewESAdapter 创建 ES 日志适配器.
+// NewESAdapter 创建 ES 日志适配器。l 不能为 nil，否则 panic。
 func NewESAdapter(l *Logger) *ESAdapter {
+	if l == nil {
+		panic("logger: NewESAdapter requires a non-nil Logger")
+	}
 	return &ESAdapter{log: l}
 }
 
@@ -99,8 +105,11 @@ type RestyAdapter struct {
 	log *Logger
 }
 
-// NewRestyAdapter 创建 Resty 日志适配器.
+// NewRestyAdapter 创建 Resty 日志适配器。l 不能为 nil，否则 panic。
 func NewRestyAdapter(l *Logger) *RestyAdapter {
+	if l == nil {
+		panic("logger: NewRestyAdapter requires a non-nil Logger")
+	}
 	return &RestyAdapter{log: l}
 }
 

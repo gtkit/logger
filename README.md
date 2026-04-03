@@ -19,6 +19,15 @@ import (
 )
 
 func main() {
+	// 方式一：返回 error，适合需要优雅处理错误的场景
+	if err := logger.New(
+		logger.WithPath("./logs/app"),
+		logger.WithLevel("info"),
+	); err != nil {
+		panic(err)
+	}
+
+	// 方式二：失败时 panic，适合 main 函数或初始化阶段
 	logger.NewZap(
 		logger.WithPath("./logs/app"),
 		logger.WithLevel("info"),
@@ -53,6 +62,13 @@ func main() {
 	logger.HError("payment failed", zap.String("order_id", "A100"))
 }
 ```
+
+## 初始化
+
+| 函数 | 说明 |
+| --- | --- |
+| `New(opts...) error` | 返回 error，适合需要优雅处理错误的场景 |
+| `NewZap(opts...)` | 失败时 panic，适合 main 函数或初始化阶段 |
 
 ## 基本行为
 
@@ -237,6 +253,31 @@ logger.Channel("order").InfoCtx(ctx, "order shipped")
 
 可用方法：`DebugCtx`、`InfoCtx`、`WarnCtx`、`ErrorCtx`。
 
+## API 方法一览
+
+### Structured（高性能，类型安全）
+
+`Debug`、`Info`、`Warn`、`Error`、`DPanic`、`Panic`、`Fatal`
+
+### Sugar — fmt 风格
+
+`Debugf`、`Infof`、`Warnf`、`Errorf`、`DPanicf`、`Panicf`、`Fatalf`
+
+### Sugar — key-value 风格
+
+`Debugw`、`Infow`、`Warnw`、`Errorw`
+
+```go
+logger.Infow("request processed", "method", "GET", "status", 200)
+logger.Errorw("query failed", "table", "orders", "err", err)
+```
+
+以上所有方法在 `Channel` 上同样可用：
+
+```go
+logger.Channel("order").Infow("created", "order_id", "A100")
+```
+
 ## 动态日志级别
 
 运行时动态调整日志级别，无需重启服务，适合线上排查问题时临时开 Debug：
@@ -265,6 +306,14 @@ slog.SetDefault(slog.New(logger.SlogHandler()))
 
 // 之后所有 slog 调用都会写入 zap 管道
 slog.Info("third-party log", "key", "value")
+
+// 支持 slog.Group 嵌套结构
+slog.Info("request",
+	slog.Group("request",
+		slog.String("method", "POST"),
+		slog.Int("status", 201),
+	),
+)
 ```
 
 ## 丢弃消息监控

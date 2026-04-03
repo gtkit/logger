@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"runtime"
 	"slices"
+	"strconv"
 
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -41,7 +42,7 @@ func (h *zapSlogHandler) Handle(_ context.Context, record slog.Record) error {
 	if h.addSource && record.PC != 0 {
 		frame, _ := runtime.CallersFrames([]uintptr{record.PC}).Next()
 		if frame.File != "" {
-			fields = append(fields, zap.String("source", frame.File+":"+itoa(frame.Line)))
+			fields = append(fields, zap.String("source", frame.File+":"+strconv.Itoa(frame.Line)))
 		}
 	}
 
@@ -121,30 +122,18 @@ func slogAttrToZapField(group string, attr slog.Attr) zap.Field {
 	case slog.KindTime:
 		return zap.Time(key, val.Time())
 	case slog.KindGroup:
-		return zap.Any(key, val.Any())
+		attrs := val.Group()
+		if len(attrs) == 0 {
+			return zap.Skip()
+		}
+		return zap.Object(key, zapcore.ObjectMarshalerFunc(func(enc zapcore.ObjectEncoder) error {
+			for _, a := range attrs {
+				slogAttrToZapField("", a).AddTo(enc)
+			}
+			return nil
+		}))
 	default:
 		return zap.Any(key, val.Any())
 	}
 }
 
-func itoa(i int) string {
-	const digits = 20
-	var buf [digits]byte
-	pos := digits
-	neg := i < 0
-	if neg {
-		i = -i
-	}
-	for i >= 10 {
-		pos--
-		buf[pos] = byte('0' + i%10)
-		i /= 10
-	}
-	pos--
-	buf[pos] = byte('0' + i)
-	if neg {
-		pos--
-		buf[pos] = '-'
-	}
-	return string(buf[pos:])
-}

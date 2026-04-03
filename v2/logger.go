@@ -8,7 +8,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
-	"time"
+	"sync/atomic"
 
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -19,15 +19,19 @@ type channelRoute struct {
 	logger *zap.Logger
 }
 
+// maxDynamicChannels 动态 channel 缓存上限，防止无限增长导致内存泄漏。
+const maxDynamicChannels = 1024
+
 type lifecycleState struct {
-	root                *zap.Logger
-	undo                func()
-	closers             []io.Closer
-	asyncMsg            *asyncMessager
-	atomicLevel         zap.AtomicLevel
-	channelRoutes       map[string]*channelRoute
-	rootChannels        map[string]*Logger
-	dynamicChannelBases sync.Map
+	root                   *zap.Logger
+	undo                   func()
+	closers                []io.Closer
+	asyncMsg               *asyncMessager
+	atomicLevel            zap.AtomicLevel
+	channelRoutes          map[string]*channelRoute
+	rootChannels           map[string]*Logger
+	dynamicChannelBases    sync.Map
+	dynamicChannelBasesCnt atomic.Int64
 
 	undoOnce  sync.Once
 	closeOnce sync.Once
@@ -56,11 +60,11 @@ func (s *lifecycleState) Sync() {
 			s.asyncMsg.close()
 		}
 		if s.root != nil {
-			_ = s.root.Sync()
+			if err := s.root.Sync(); err != nil {
+				fmt.Fprintf(os.Stderr, "logger: sync root logger: %v\n", err)
+			}
 		}
-		for _, c := range s.closers {
-			_ = c.Close()
-		}
+		closeClosers(s.closers)
 	})
 }
 
@@ -184,9 +188,7 @@ func buildEncoder(outJSON bool) zapcore.Encoder {
 	ec.MessageKey = "msg"
 	ec.StacktraceKey = "stacktrace"
 
-	ec.EncodeTime = func(t time.Time, enc zapcore.PrimitiveArrayEncoder) {
-		enc.AppendString(t.Format("2006-01-02T15:04:05.000Z0700"))
-	}
+	ec.EncodeTime = zapcore.ISO8601TimeEncoder
 	ec.LineEnding = zapcore.DefaultLineEnding
 	ec.EncodeLevel = zapcore.CapitalLevelEncoder
 	ec.EncodeDuration = zapcore.SecondsDurationEncoder
@@ -316,7 +318,9 @@ func ensureLogDir(logpath string) error {
 
 func closeClosers(closers []io.Closer) {
 	for _, c := range closers {
-		_ = c.Close()
+		if err := c.Close(); err != nil {
+			fmt.Fprintf(os.Stderr, "logger: close resource: %v\n", err)
+		}
 	}
 }
 

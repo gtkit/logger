@@ -63,11 +63,15 @@ func (l *Logger) GetLevel() string {
 }
 
 func (l *Logger) Undo() {
-	l.state.Undo()
+	if l.state != nil {
+		l.state.Undo()
+	}
 }
 
 func (l *Logger) Sync() {
-	l.state.Sync()
+	if l.state != nil {
+		l.state.Sync()
+	}
 }
 
 func (l *Logger) Debug(msg string, fields ...zap.Field) {
@@ -106,8 +110,20 @@ func (l *Logger) Infof(format string, args ...any) {
 	l.sugar.Infof(format, args...)
 }
 
+func (l *Logger) Debugw(msg string, keysAndValues ...any) {
+	l.sugar.Debugw(msg, keysAndValues...)
+}
+
 func (l *Logger) Infow(msg string, keysAndValues ...any) {
 	l.sugar.Infow(msg, keysAndValues...)
+}
+
+func (l *Logger) Warnw(msg string, keysAndValues ...any) {
+	l.sugar.Warnw(msg, keysAndValues...)
+}
+
+func (l *Logger) Errorw(msg string, keysAndValues ...any) {
+	l.sugar.Errorw(msg, keysAndValues...)
 }
 
 func (l *Logger) Warnf(format string, args ...any) {
@@ -280,7 +296,23 @@ func (l *Logger) baseForChannel(channel string) *zap.Logger {
 	}
 
 	logger := l.rootLogger().With(zap.String("channel", channel))
-	actual, _ := l.state.dynamicChannelBases.LoadOrStore(channel, logger)
+
+	// CAS 预留缓存 slot，确保计数不超过上限。
+	for {
+		cnt := l.state.dynamicChannelBasesCnt.Load()
+		if cnt >= maxDynamicChannels {
+			return logger
+		}
+		if l.state.dynamicChannelBasesCnt.CompareAndSwap(cnt, cnt+1) {
+			break
+		}
+	}
+
+	actual, loaded := l.state.dynamicChannelBases.LoadOrStore(channel, logger)
+	if loaded {
+		// 已有缓存，释放预留的 slot。
+		l.state.dynamicChannelBasesCnt.Add(-1)
+	}
 
 	if z, ok := actual.(*zap.Logger); ok {
 		return z

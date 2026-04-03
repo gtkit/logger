@@ -1,28 +1,34 @@
 package logger
 
 import (
+	"fmt"
 	"io"
+	"os"
 	"sync"
 	"sync/atomic"
 
 	"go.uber.org/zap"
 )
 
+// maxDynamicChannels 动态 channel 缓存上限，防止无限增长导致内存泄漏。
+const maxDynamicChannels = 1024
+
 type loggerState struct {
-	root           *zap.Logger
-	sugar          *zap.SugaredLogger
-	messager       Messager
-	asyncMsg       *asyncMessager
-	contextFields  ContextFieldsFunc
-	atomicLevel    zap.AtomicLevel
-	channelBases   map[string]*zap.Logger
-	dynamicChannel sync.Map
-	closers        []io.Closer
-	undo           func()
-	done           chan struct{}
-	doneOnce       sync.Once
-	retired        atomic.Bool
-	refs           atomic.Int64
+	root              *zap.Logger
+	sugar             *zap.SugaredLogger
+	messager          Messager
+	asyncMsg          *asyncMessager
+	contextFields     ContextFieldsFunc
+	atomicLevel       zap.AtomicLevel
+	channelBases      map[string]*zap.Logger
+	dynamicChannel    sync.Map
+	dynamicChannelCnt atomic.Int64
+	closers           []io.Closer
+	undo              func()
+	done              chan struct{}
+	doneOnce          sync.Once
+	retired           atomic.Bool
+	refs              atomic.Int64
 }
 
 func newLoggerState(root *zap.Logger, channelBases map[string]*zap.Logger, closers []io.Closer, messager Messager, asyncMsg *asyncMessager, contextFields ContextFieldsFunc, atomicLevel zap.AtomicLevel) *loggerState {
@@ -116,7 +122,9 @@ func (s *loggerState) closeResources() {
 	if s.asyncMsg != nil {
 		s.asyncMsg.close()
 	}
-	_ = s.root.Sync()
+	if err := s.root.Sync(); err != nil {
+		fmt.Fprintf(os.Stderr, "logger: sync root logger: %v\n", err)
+	}
 	closeClosers(s.closers)
 }
 
@@ -148,7 +156,23 @@ func (s *loggerState) channelLogger(name string) *zap.Logger {
 	}
 
 	logger := s.root.With(zap.String("channel", name))
-	actual, _ := s.dynamicChannel.LoadOrStore(name, logger)
+
+	// CAS 预留缓存 slot，确保计数不超过上限。
+	for {
+		cnt := s.dynamicChannelCnt.Load()
+		if cnt >= maxDynamicChannels {
+			return logger
+		}
+		if s.dynamicChannelCnt.CompareAndSwap(cnt, cnt+1) {
+			break
+		}
+	}
+
+	actual, loaded := s.dynamicChannel.LoadOrStore(name, logger)
+	if loaded {
+		// 已有缓存，释放预留的 slot。
+		s.dynamicChannelCnt.Add(-1)
+	}
 
 	if l, ok := actual.(*zap.Logger); ok {
 		return l
