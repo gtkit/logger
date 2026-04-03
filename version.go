@@ -1,3 +1,3 @@
 package logger
 
-const Version = "v1.4.2"
+const Version = "v1.4.3"
