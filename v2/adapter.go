@@ -75,6 +75,39 @@ func cronFormatTimes(keysAndValues []any) []any {
 }
 
 // ============================================================
+// Migrate 适配器 - 适配 gtkit/migrate/v2 的 migration.Logger 接口
+// ============================================================
+
+// MigrateAdapter 适配 gtkit/migrate/v2 的 migration.Logger 接口.
+// 通过 SugaredLogger 的 key-value 方式输出结构化日志.
+type MigrateAdapter struct {
+	log *Logger
+}
+
+// NewMigrateAdapter 创建 Migrate 日志适配器。l 不能为 nil，否则 panic。
+func NewMigrateAdapter(l *Logger) *MigrateAdapter {
+	if l == nil {
+		panic("logger: NewMigrateAdapter requires a non-nil Logger")
+	}
+	return &MigrateAdapter{log: l}
+}
+
+// Info implements migration.Logger.
+func (a *MigrateAdapter) Info(msg string, keysAndValues ...any) {
+	a.log.Infow("[migrate] "+msg, keysAndValues...)
+}
+
+// Warn implements migration.Logger.
+func (a *MigrateAdapter) Warn(msg string, keysAndValues ...any) {
+	a.log.Warnw("[migrate] "+msg, keysAndValues...)
+}
+
+// Error implements migration.Logger.
+func (a *MigrateAdapter) Error(msg string, keysAndValues ...any) {
+	a.log.Errorw("[migrate] "+msg, keysAndValues...)
+}
+
+// ============================================================
 // ES 适配器 - 适配 Elasticsearch client 的日志接口
 // ============================================================
 
