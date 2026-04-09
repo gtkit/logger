@@ -1422,6 +1422,190 @@ func TestSlogHandlerGroupAttr(t *testing.T) {
 // 22. Dynamic channel cache limit
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// 23. BufferedWriteSyncer
+// ---------------------------------------------------------------------------
+
+func TestOptionWithBuffered(t *testing.T) {
+	t.Parallel()
+	cfg := &logConfig{}
+	if err := WithBuffered(true)(cfg); err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.buffered {
+		t.Fatal("buffered not set")
+	}
+}
+
+func TestOptionWithBufferSize(t *testing.T) {
+	t.Parallel()
+	cfg := &logConfig{}
+	if err := WithBufferSize(512 * 1024)(cfg); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.bufferSize != 512*1024 {
+		t.Fatalf("bufferSize = %d", cfg.bufferSize)
+	}
+	if err := WithBufferSize(0)(cfg); err == nil {
+		t.Fatal("expected error for 0")
+	}
+	if err := WithBufferSize(-1)(cfg); err == nil {
+		t.Fatal("expected error for -1")
+	}
+}
+
+func TestOptionWithFlushInterval(t *testing.T) {
+	t.Parallel()
+	cfg := &logConfig{}
+	if err := WithFlushInterval(10 * time.Second)(cfg); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.flushInterval != 10*time.Second {
+		t.Fatalf("flushInterval = %v", cfg.flushInterval)
+	}
+	if err := WithFlushInterval(0)(cfg); err == nil {
+		t.Fatal("expected error for 0")
+	}
+	if err := WithFlushInterval(-1 * time.Second)(cfg); err == nil {
+		t.Fatal("expected error for negative")
+	}
+}
+
+func TestBufferedWriteActuallyLandsOnDisk(t *testing.T) {
+	dir := t.TempDir()
+	logpath := filepath.Join(dir, "app")
+
+	NewZap(
+		WithConsole(false),
+		WithFile(true),
+		WithOutJSON(true),
+		WithPath(logpath),
+		WithBuffered(true),
+	)
+
+	Info("buffered-test-msg", zap.String("key", "val"))
+
+	// Sync flushes the buffer to disk.
+	Sync()
+
+	content := readLogFile(t, logpath+"-info.log")
+	if !strings.Contains(content, "buffered-test-msg") {
+		t.Fatalf("buffered message not found after Sync: %s", content)
+	}
+	if !strings.Contains(content, `"key":"val"`) {
+		t.Fatalf("buffered field not found after Sync: %s", content)
+	}
+}
+
+func TestBufferedDailyWriteActuallyLandsOnDisk(t *testing.T) {
+	dir := t.TempDir()
+	logpath := filepath.Join(dir, "daily")
+
+	NewZap(
+		WithConsole(false),
+		WithFile(true),
+		WithOutJSON(true),
+		WithPath(logpath),
+		WithDivision("daily"),
+		WithBuffered(true),
+	)
+
+	Info("buffered-daily-msg", zap.String("mode", "daily"))
+	Sync()
+
+	today := time.Now().Format(time.DateOnly)
+	content := readLogFile(t, logpath+"-info-"+today+".log")
+	if !strings.Contains(content, "buffered-daily-msg") {
+		t.Fatalf("buffered daily message not found: %s", content)
+	}
+}
+
+func TestBufferedChannelWriteActuallyLandsOnDisk(t *testing.T) {
+	dir := t.TempDir()
+	defaultPath := filepath.Join(dir, "default", "app")
+	channelPath := filepath.Join(dir, "channels", "order", "order")
+
+	NewZap(
+		WithConsole(false),
+		WithFile(true),
+		WithOutJSON(true),
+		WithPath(defaultPath),
+		WithBuffered(true),
+		WithChannel("order",
+			WithChannelPath(channelPath),
+			WithChannelDuplicateToDefault(false),
+		),
+	)
+
+	Channel("order").Info("buffered-channel-msg", zap.String("order_id", "A100"))
+	Sync()
+
+	content := readLogFile(t, channelPath+"-info.log")
+	if !strings.Contains(content, "buffered-channel-msg") {
+		t.Fatalf("buffered channel message not found: %s", content)
+	}
+	if !strings.Contains(content, `"channel":"order"`) {
+		t.Fatalf("buffered channel field not found: %s", content)
+	}
+}
+
+func TestStopCloserClosesUnderlyingWriter(t *testing.T) {
+	t.Parallel()
+
+	var closed atomic.Bool
+	underlying := closerFunc(func() error {
+		closed.Store(true)
+		return nil
+	})
+
+	ws := zapcore.AddSync(underlying)
+	bws := &zapcore.BufferedWriteSyncer{
+		WS:            ws,
+		Size:          4096,
+		FlushInterval: time.Minute,
+	}
+
+	sc := &stopCloser{bws: bws, underlying: underlying}
+	if err := sc.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if !closed.Load() {
+		t.Fatal("underlying writer was not closed by stopCloser")
+	}
+}
+
+// closerFunc is an io.WriteCloser backed by a function, for testing.
+type closerFunc func() error
+
+func (f closerFunc) Write(p []byte) (int, error) { return len(p), nil }
+func (f closerFunc) Close() error                 { return f() }
+
+func TestBufferedWithCustomSize(t *testing.T) {
+	dir := t.TempDir()
+	logpath := filepath.Join(dir, "app")
+
+	err := New(
+		WithConsole(false),
+		WithFile(true),
+		WithOutJSON(true),
+		WithPath(logpath),
+		WithBuffered(true),
+		WithBufferSize(128*1024),
+		WithFlushInterval(5*time.Second),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	Info("custom-buffer-msg")
+	Sync()
+
+	content := readLogFile(t, logpath+"-info.log")
+	if !strings.Contains(content, "custom-buffer-msg") {
+		t.Fatalf("message not found: %s", content)
+	}
+}
+
 func TestDynamicChannelCacheLimit(t *testing.T) {
 	NewZap(WithConsole(false), WithFile(false))
 	defer Sync()

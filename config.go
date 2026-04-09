@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -62,6 +63,9 @@ type logConfig struct {
 	messagerQueueSize int
 	contextFields     ContextFieldsFunc
 	channels          map[string]*channelConfig
+	buffered          bool
+	bufferSize        int
+	flushInterval     time.Duration
 }
 
 type channelConfig struct {
@@ -165,7 +169,7 @@ func buildSizeWriter(cfg *logConfig) (zapcore.WriteSyncer, []io.Closer, error) {
 		LocalTime:  true,
 	}
 
-	return zapcore.AddSync(lj), []io.Closer{lj}, nil
+	return wrapWriter(cfg, zapcore.AddSync(lj), lj)
 }
 
 func buildDailyWriter(cfg *logConfig) (zapcore.WriteSyncer, []io.Closer, error) {
@@ -174,7 +178,52 @@ func buildDailyWriter(cfg *logConfig) (zapcore.WriteSyncer, []io.Closer, error) 
 		return nil, nil, err
 	}
 
-	return zapcore.AddSync(dw), []io.Closer{dw}, nil
+	return wrapWriter(cfg, zapcore.AddSync(dw), dw)
+}
+
+const (
+	defaultBufferSize    = 256 * 1024     // 256KB
+	defaultFlushInterval = 30 * time.Second
+)
+
+// wrapWriter 根据配置决定是否用 BufferedWriteSyncer 包装底层 WriteSyncer。
+func wrapWriter(cfg *logConfig, ws zapcore.WriteSyncer, underlying io.Closer) (zapcore.WriteSyncer, []io.Closer, error) {
+	if !cfg.buffered {
+		return ws, []io.Closer{underlying}, nil
+	}
+
+	bufSize := cfg.bufferSize
+	if bufSize <= 0 {
+		bufSize = defaultBufferSize
+	}
+	flushInterval := cfg.flushInterval
+	if flushInterval <= 0 {
+		flushInterval = defaultFlushInterval
+	}
+
+	bws := &zapcore.BufferedWriteSyncer{
+		WS:            ws,
+		Size:          bufSize,
+		FlushInterval: flushInterval,
+	}
+	// BufferedWriteSyncer.Stop() 只 flush + sync，不会 close 底层 writer，
+	// 所以 stopCloser 需要先 Stop 再 Close underlying，确保文件句柄释放。
+	return bws, []io.Closer{&stopCloser{bws: bws, underlying: underlying}}, nil
+}
+
+// stopCloser 将 BufferedWriteSyncer 的 Stop() 适配为 io.Closer，
+// 并负责关闭底层 writer。
+type stopCloser struct {
+	bws        *zapcore.BufferedWriteSyncer
+	underlying io.Closer
+}
+
+func (s *stopCloser) Close() error {
+	err := s.bws.Stop()
+	if err2 := s.underlying.Close(); err == nil {
+		err = err2
+	}
+	return err
 }
 
 func buildEncoder(outJSON bool) zapcore.Encoder {

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // Option configures the package-level logger.
@@ -117,6 +118,41 @@ func WithMessagerQueueSize(size int) Option {
 func WithContextFields(fn ContextFieldsFunc) Option {
 	return func(c *logConfig) error {
 		c.contextFields = fn
+		return nil
+	}
+}
+
+// WithBuffered 启用文件写入缓冲（BufferedWriteSyncer）。
+// 缓冲区大小默认 256KB，刷写间隔默认 30 秒。
+// 启用后可显著减少系统调用次数，提升高吞吐场景下的写入性能，
+// 但进程异常退出时可能丢失缓冲区中未刷写的日志。
+func WithBuffered(enabled bool) Option {
+	return func(c *logConfig) error {
+		c.buffered = enabled
+		return nil
+	}
+}
+
+// WithBufferSize 设置缓冲区大小（字节），默认 256KB（256*1024）。
+// 仅在 WithBuffered(true) 时生效。
+func WithBufferSize(size int) Option {
+	return func(c *logConfig) error {
+		if size <= 0 {
+			return fmt.Errorf("logger: bufferSize must be > 0, got %d", size)
+		}
+		c.bufferSize = size
+		return nil
+	}
+}
+
+// WithFlushInterval 设置缓冲区自动刷写间隔，默认 30 秒。
+// 仅在 WithBuffered(true) 时生效。
+func WithFlushInterval(d time.Duration) Option {
+	return func(c *logConfig) error {
+		if d <= 0 {
+			return fmt.Errorf("logger: flushInterval must be > 0, got %v", d)
+		}
+		c.flushInterval = d
 		return nil
 	}
 }

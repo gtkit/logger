@@ -2,6 +2,7 @@ package logger
 
 import (
 	"context"
+	"time"
 
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -43,6 +44,9 @@ type Config struct {
 	messagerQueueSize int
 	contextFields     ContextFieldsFunc
 	channels          map[string]*channelConfig
+	buffered          bool
+	bufferSize        int
+	flushInterval     time.Duration
 }
 
 type channelConfig struct {

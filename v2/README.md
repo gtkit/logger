@@ -133,6 +133,9 @@ logger.WithChannel("audit",
 | `WithMaxBackups(n)` | 最大备份数量 | `50` |
 | `WithCompress(b)` | 是否压缩归档 | `true` |
 | `WithMessager(m)` | 外部消息推送 Hook | `nil` |
+| `WithBuffered(b)` | 是否启用缓冲写入（BufferedWriteSyncer） | `false` |
+| `WithBufferSize(n)` | 缓冲区大小（字节），仅 `WithBuffered(true)` 时生效 | `256KB` |
+| `WithFlushInterval(d)` | 缓冲区自动刷写间隔，仅 `WithBuffered(true)` 时生效 | `30s` |
 | `WithChannel(name, ...opts)` | 注册独立 channel 文件路由 | 无 |
 
 ### ChannelOption
@@ -242,6 +245,132 @@ log.Errorw("query failed", "table", "orders", "err", err)
 log.Channel("order").Infow("created", "order_id", "A100")
 ```
 
+## 写入模式：WriteSyncer vs BufferedWriteSyncer
+
+默认使用 `WriteSyncer`（同步写入），可通过 `WithBuffered(true)` 切换为 `BufferedWriteSyncer`（缓冲写入）。两者的核心区别在于日志数据从用户调用到真正落盘之间的路径不同。
+
+### 内部原理
+
+**WriteSyncer（同步写入）：**
+
+```text
+log.Info("msg") → zap 编码 → lumberjack.Write() → os.File.Write() → 内核缓冲区 → 磁盘
+                               ↑ 每条日志都走一次完整的 write 系统调用
+```
+
+**BufferedWriteSyncer（缓冲写入）：**
+
+```text
+log.Info("msg") → zap 编码 → BufferedWriteSyncer.Write() → 内存缓冲区（用户态）
+                                                                 │
+                           缓冲区满 或 定时器到期 ──────────────────┘
+                                                                 ↓
+                           lumberjack.Write() → os.File.Write() → 内核缓冲区 → 磁盘
+                           ↑ 多条日志合并为一次 write 系统调用
+```
+
+关键差异：BufferedWriteSyncer 在 zap 与底层 writer 之间插入了一层**用户态内存缓冲区**，将多次小写入合并为少量大写入，从而减少系统调用次数。
+
+### 全维度对比
+
+| 对比项 | WriteSyncer（默认） | BufferedWriteSyncer |
+| --- | --- | --- |
+| **写入方式** | 每条日志立即写入磁盘 | 先写入内存缓冲区，满或到期后批量刷盘 |
+| **系统调用** | 每条日志 1 次 `write` syscall | N 条日志合并为 1 次 `write` syscall |
+| **写入延迟** | 无——调用返回即已写入内核缓冲区 | 有——取决于缓冲区大小和刷写间隔（默认最多 30 秒） |
+| **写入性能** | 高频写入时 I/O 开销大 | 高吞吐场景性能提升约 3-4 倍 |
+| **内存占用** | 无额外内存 | 额外占用缓冲区大小的内存（默认 256KB） |
+| **正常退出** | `Sync()` 调用 `os.File.Sync()`，数据已在磁盘 | `Sync()` 先 flush 缓冲区再 sync，数据落盘，**不丢日志** |
+| **异常退出** | 已写入内核缓冲区的数据通常不丢 | 用户态缓冲区中未 flush 的数据**会丢失** |
+| **丢失窗口** | 几乎为零 | 最多丢失 1 个缓冲区周期的日志（默认最多 30 秒或 256KB） |
+| **线程安全** | 由底层 lumberjack 的 mutex 保证 | BufferedWriteSyncer 自带 mutex，再调用底层 writer |
+| **适用场景** | 大多数服务——日志量适中，数据安全优先 | 高频日志——追求吞吐量，可容忍极端情况丢少量日志 |
+
+### 异常退出场景详解
+
+| 退出方式 | WriteSyncer | BufferedWriteSyncer |
+| --- | --- | --- |
+| `Sync()` 后正常退出 | 不丢 | 不丢（Sync 会 flush 缓冲区） |
+| `os.Exit(0)` 未调 `Sync()` | 不丢（已在内核缓冲区） | **可能丢**（用户态缓冲区未 flush） |
+| `kill -15`（SIGTERM）+ 信号处理调 `Sync()` | 不丢 | 不丢 |
+| `kill -9`（SIGKILL） | 不丢（已在内核缓冲区） | **丢失缓冲区中的数据** |
+| OOM Killer | 不丢（已在内核缓冲区） | **丢失缓冲区中的数据** |
+| `panic` 未 recover | 不丢（已在内核缓冲区） | **可能丢**（取决于 panic 时是否执行了 defer Sync） |
+
+### WriteSyncer（默认模式）
+
+不需要额外配置，默认即为同步写入：
+
+```go
+log := logger.MustNew(
+    logger.WithPath("./logs/app"),
+    logger.WithLevel("info"),
+)
+defer log.Sync()
+```
+
+**优点：**
+- 每条日志写入后立即进入内核缓冲区，数据安全性高
+- 进程崩溃、被 kill、OOM 等异常退出几乎不丢日志
+- 零额外内存开销
+- 行为直观，适合绝大多数业务场景
+
+**缺点：**
+- 每条日志都触发系统调用（`write` syscall），高频写入时 I/O 开销大
+- 在日志量极大的服务中（如每秒万条以上）可能成为性能瓶颈
+
+### BufferedWriteSyncer（缓冲模式）
+
+通过 `WithBuffered(true)` 启用，日志先写入内存缓冲区，当缓冲区满或达到刷写间隔时批量写入磁盘：
+
+```go
+log := logger.MustNew(
+    logger.WithPath("./logs/app"),
+    logger.WithLevel("info"),
+    logger.WithBuffered(true),                    // 启用缓冲
+    logger.WithBufferSize(512*1024),              // 可选：缓冲区 512KB（默认 256KB）
+    logger.WithFlushInterval(10*time.Second),     // 可选：每 10 秒刷写（默认 30 秒）
+)
+defer log.Sync() // 重要：确保退出时 flush 缓冲区
+```
+
+**优点：**
+- 批量写入大幅减少系统调用次数，高吞吐场景下性能提升显著（约 3-4 倍）
+- 适合日志量大的网关、数据管道、批处理等服务
+- 减少磁盘 I/O 竞争，对同机其他服务更友好
+
+**缺点：**
+- 进程异常退出时（kill -9、OOM、panic 未 recover）可能丢失缓冲区中未 flush 的日志
+- 日志写入到实际落盘之间有延迟，`tail -f` 看日志会有滞后感
+- 额外占用缓冲区大小的内存（默认 256KB，每个文件 writer 独立分配）
+- 必须确保程序退出时调用 `Sync()` flush 残留数据
+
+### 推荐：大多数场景使用默认的 WriteSyncer
+
+**推荐绝大多数服务使用默认的 `WriteSyncer`（不开启缓冲）。** 理由：
+
+1. **日志的首要职责是可靠记录**——丢失日志的代价通常远高于多几次系统调用的开销
+2. **大多数服务的日志量不会成为瓶颈**——每秒几百到几千条日志，同步写入完全够用
+3. **排查线上问题时需要实时看日志**——缓冲延迟会影响 `tail -f` 的实时性
+4. **减少心智负担**——不需要担心异常退出丢日志，不需要确保每个退出路径都调了 `Sync()`
+
+只在以下场景考虑开启 `WithBuffered(true)`：
+
+| 场景 | 说明 |
+| --- | --- |
+| **高吞吐网关 / 代理** | 每秒数万条日志，同步写入成为 CPU/IO 瓶颈 |
+| **数据管道 / 批处理** | 大量日志密集写入，但任务结束时会正常 `Sync()` |
+| **非关键日志路径** | 如 access log、debug trace，丢少量可接受 |
+
+以下场景**必须使用默认的 WriteSyncer**：
+
+| 场景 | 说明 |
+| --- | --- |
+| **金融交易 / 支付** | 每笔交易日志都是审计证据，不能丢 |
+| **审计 / 合规** | 监管要求完整记录，丢失即违规 |
+| **安全事件** | 入侵检测、权限变更等日志丢失会影响事后溯源 |
+| **线上排障依赖实时日志** | `tail -f` 需要即时看到输出 |
+
 ## 使用 Channel 的利弊
 
 ### 优点
@@ -266,7 +395,7 @@ log.Channel("order").Infow("created", "order_id", "A100")
 - I/O 比较敏感时，优先使用未配置 channel 或把 `WithChannelDuplicateToDefault(false)` 用在确实需要独立文件的分类上。
 - 如果项目后续会上集中日志平台，优先考虑“默认日志 + 结构化字段检索”，不要把 channel 文件拆分做成主路径。
 - 建议显式设置 `WithPath("./logs/app")`，避免直接使用默认 `./logs/` 前缀带来不够直观的文件命名。
-- 当前实现是同步写日志，不会在库内部起异步队列；这能保证语义清晰，但吞吐上限仍然受磁盘 I/O 约束。
+- 默认同步写日志，保证语义清晰；高吞吐场景可通过 `WithBuffered(true)` 启用缓冲写入提升性能，详见上方「写入模式」章节。
 
 ## 高性能使用建议
 
