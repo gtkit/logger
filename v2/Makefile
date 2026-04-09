@@ -1,4 +1,4 @@
-.PHONY: lint check tag gittag
+.PHONY: lint check tag gittag fix-tags
 
 LINT_TARGETS ?= ./...
 
@@ -23,14 +23,26 @@ tag: ## Bump patch version and push tag
 	printf "Bump: v%s -> %s\n" "$$current" "$$new"; \
 	sed -E -i.bak 's/(const Version = ")([^"]+)(")/\1'"$$new"'\3/' version.go; \
 	git add version.go; \
-	git commit -m "chore(release): v2 $$new"; \
+	git commit -m "chore(release): logger/v2 $$new"; \
 	printf "Release: %s\n" "$$new"; \
 	git push gtkit HEAD; \
-	git tag -a "v2/$${new}" -m "release v2/$$new"; \
-	printf "Tag: v2/%s\n" "$$new"; \
-	git push gtkit "v2/$${new}"; \
+	git tag -a "$$new" -m "release $$new"; \
+	printf "Tag: %s\n" "$$new"; \
+	git push gtkit "$$new"; \
 	printf "Done\n"
 	rm -f version.go.bak
 
 gittag: ## Show latest tag
-	git tag --sort=-version:refname | grep '^v2/' | head -1
+	git tag --list 'v2.*' --sort=-version:refname | head -1
+
+fix-tags: ## Backfill canonical v2.x.y tags from legacy v2/v2.x.y tags
+	@for legacy in $$(git tag --list 'v2/v2.*'); do \
+		version=$${legacy#v2/}; \
+		if git rev-parse "$$version" >/dev/null 2>&1; then \
+			printf "skip %s (already exists)\n" "$$version"; \
+			continue; \
+		fi; \
+		obj=$$(git rev-parse "$$legacy^{}"); \
+		git tag -a "$$version" "$$obj" -m "release $$version"; \
+		printf "created %s -> %s\n" "$$version" "$$obj"; \
+	done

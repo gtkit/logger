@@ -8,6 +8,13 @@
 go get github.com/gtkit/logger/v2@latest
 ```
 
+## 发布规范
+
+- `v2/go.mod` 的模块路径必须保持为 `github.com/gtkit/logger/v2`。
+- 当前仓库采用“仓库根目录 + major version 子目录 `./v2`”布局，发布 tag 必须使用 `v2.x.y`，不能使用 `v2/v2.x.y`。
+- `v2/Makefile` 中的 `make tag` 会创建正确的 `v2.x.y` tag。
+- 历史上如果误打了 `v2/v2.x.y`，不要删除或改写旧 tag；应补充创建同提交上的规范 tag。可先在本地执行 `make fix-tags` 生成缺失的 `v2.x.y` tag，再按需推送。
+
 ## 快速开始
 
 ```go
@@ -221,6 +228,10 @@ slog.Info("request",
 ```
 
 ## API 方法一览
+
+## License
+
+Apache-2.0. See [../LICENSE](../LICENSE).
 
 ### Structured（高性能，类型安全）
 

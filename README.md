@@ -258,6 +258,10 @@ logger.Channel("order").InfoCtx(ctx, "order shipped")
 
 ## API 方法一览
 
+## License
+
+Apache-2.0. See [LICENSE](./LICENSE).
+
 ### Structured（高性能，类型安全）
 
 `Debug`、`Info`、`Warn`、`Error`、`DPanic`、`Panic`、`Fatal`
