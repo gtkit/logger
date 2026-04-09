@@ -52,6 +52,7 @@ type logConfig struct {
 	consoleStdout     bool
 	fileStdout        bool
 	outJSON           bool
+	durationEncoder   zapcore.DurationEncoder
 	division          string
 	path              string
 	compress          bool
@@ -80,6 +81,7 @@ func New(opts ...Option) error {
 		consoleStdout:     false,
 		fileStdout:        true,
 		outJSON:           false,
+		durationEncoder:   zapcore.SecondsDurationEncoder,
 		division:          "size",
 		path:              defaultPath,
 		compress:          true,
@@ -182,7 +184,7 @@ func buildDailyWriter(cfg *logConfig) (zapcore.WriteSyncer, []io.Closer, error) 
 }
 
 const (
-	defaultBufferSize    = 256 * 1024     // 256KB
+	defaultBufferSize    = 256 * 1024 // 256KB
 	defaultFlushInterval = 30 * time.Second
 )
 
@@ -226,7 +228,7 @@ func (s *stopCloser) Close() error {
 	return err
 }
 
-func buildEncoder(outJSON bool) zapcore.Encoder {
+func buildEncoder(outJSON bool, durationEncoder zapcore.DurationEncoder) zapcore.Encoder {
 	ec := zap.NewProductionEncoderConfig()
 
 	ec.TimeKey = "time"
@@ -239,7 +241,10 @@ func buildEncoder(outJSON bool) zapcore.Encoder {
 	ec.EncodeTime = zapcore.ISO8601TimeEncoder
 	ec.LineEnding = zapcore.DefaultLineEnding
 	ec.EncodeLevel = zapcore.CapitalLevelEncoder
-	ec.EncodeDuration = zapcore.SecondsDurationEncoder
+	if durationEncoder == nil {
+		durationEncoder = zapcore.SecondsDurationEncoder
+	}
+	ec.EncodeDuration = durationEncoder
 	ec.EncodeCaller = zapcore.ShortCallerEncoder
 
 	if outJSON {
@@ -317,7 +322,7 @@ func buildCore(cfg *logConfig, lvl zap.AtomicLevel) (zapcore.Core, []io.Closer, 
 	}
 
 	core := zapcore.NewCore(
-		buildEncoder(cfg.outJSON),
+		buildEncoder(cfg.outJSON, cfg.durationEncoder),
 		zapcore.NewMultiWriteSyncer(writers...),
 		lvl,
 	)

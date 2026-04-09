@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"go.uber.org/zap/zapcore"
 )
 
 // Option configures the package-level logger.
@@ -47,6 +49,16 @@ func WithPath(p string) Option {
 func WithOutJSON(b bool) Option {
 	return func(c *logConfig) error {
 		c.outJSON = b
+		return nil
+	}
+}
+
+func WithDurationEncoder(encoder zapcore.DurationEncoder) Option {
+	return func(c *logConfig) error {
+		if encoder == nil {
+			return errors.New("logger: durationEncoder must not be nil")
+		}
+		c.durationEncoder = encoder
 		return nil
 	}
 }

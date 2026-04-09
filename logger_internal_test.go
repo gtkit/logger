@@ -471,8 +471,8 @@ func TestAsyncMessagerQueueFullDrops(t *testing.T) {
 	am := newAsyncMessager(inner, 1)
 
 	// The worker goroutine is blocked on the first message.
-	am.Send("first")  // picked up by worker, worker blocks
-	<-inner.started    // wait for goroutine to start processing
+	am.Send("first")      // picked up by worker, worker blocks
+	<-inner.started       // wait for goroutine to start processing
 	am.Send("fill-queue") // fills the queue (size=1)
 	am.Send("dropped")    // should be silently dropped
 
@@ -1246,6 +1246,27 @@ func TestSlogHandlerRespectsLevel(t *testing.T) {
 	}
 }
 
+func TestDurationEncoderOptionUsesStringEncoder(t *testing.T) {
+	dir := t.TempDir()
+	logpath := filepath.Join(dir, "app")
+
+	NewZap(
+		WithConsole(false),
+		WithFile(true),
+		WithOutJSON(true),
+		WithPath(logpath),
+		WithDurationEncoder(zapcore.StringDurationEncoder),
+	)
+	defer Sync()
+
+	Info("duration-test", zap.Duration("elapsed", 1500*time.Millisecond))
+
+	content := readLogFile(t, logpath+"-info.log")
+	if !strings.Contains(content, `"elapsed":"1.5s"`) {
+		t.Fatalf("duration encoder did not write string duration: %s", content)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // 17. DroppedMessages
 // ---------------------------------------------------------------------------
@@ -1578,7 +1599,7 @@ func TestStopCloserClosesUnderlyingWriter(t *testing.T) {
 type closerFunc func() error
 
 func (f closerFunc) Write(p []byte) (int, error) { return len(p), nil }
-func (f closerFunc) Close() error                 { return f() }
+func (f closerFunc) Close() error                { return f() }
 
 func TestBufferedWithCustomSize(t *testing.T) {
 	dir := t.TempDir()

@@ -906,6 +906,27 @@ func TestSlogHandler_EnabledRespectsLevel(t *testing.T) {
 	}
 }
 
+func TestDurationEncoderOption_UsesStringEncoder(t *testing.T) {
+	tempDir := t.TempDir()
+	path := filepath.Join(tempDir, "logs", "app")
+
+	l := MustNew(
+		WithConsole(false),
+		WithFile(true),
+		WithOutJSON(true),
+		WithPath(path),
+		WithDurationEncoder(zapcore.StringDurationEncoder),
+	)
+	defer l.Sync()
+
+	l.Info("duration-test", zap.Duration("elapsed", 1500*time.Millisecond))
+
+	content := readLogFile(t, path+"-info.log")
+	if !strings.Contains(content, `"elapsed":"1.5s"`) {
+		t.Fatalf("duration encoder did not write string duration: %s", content)
+	}
+}
+
 // ============================================================
 // DroppedMessages tests
 // ============================================================
@@ -1212,7 +1233,7 @@ func TestStopCloserClosesUnderlyingWriter(t *testing.T) {
 type closerFunc func() error
 
 func (f closerFunc) Write(p []byte) (int, error) { return len(p), nil }
-func (f closerFunc) Close() error                 { return f() }
+func (f closerFunc) Close() error                { return f() }
 
 func TestBufferedWithCustomSize(t *testing.T) {
 	dir := t.TempDir()

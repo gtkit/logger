@@ -142,6 +142,7 @@ logger.WithChannel("audit",
 | `WithPath(p)` | 默认日志文件路径前缀 | `./logs/` |
 | `WithLevel(l)` | 日志级别 | `info` |
 | `WithOutJSON(b)` | 是否输出 JSON | `false` |
+| `WithDurationEncoder(enc)` | 自定义 `time.Duration` 编码方式，例如 `zapcore.StringDurationEncoder` | `zapcore.SecondsDurationEncoder` |
 | `WithConsole(b)` | 是否输出到控制台 | `false` |
 | `WithFile(b)` | 是否输出到文件 | `true` |
 | `WithDivision(d)` | 切割方式: `size` / `daily` | `size` |

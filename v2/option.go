@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"go.uber.org/zap/zapcore"
 )
 
 type Option func(*Config) error
@@ -46,6 +48,16 @@ func WithPath(p string) Option {
 func WithOutJSON(b bool) Option {
 	return func(c *Config) error {
 		c.outJSON = b
+		return nil
+	}
+}
+
+func WithDurationEncoder(encoder zapcore.DurationEncoder) Option {
+	return func(c *Config) error {
+		if encoder == nil {
+			return errors.New("logger: durationEncoder must not be nil")
+		}
+		c.durationEncoder = encoder
 		return nil
 	}
 }

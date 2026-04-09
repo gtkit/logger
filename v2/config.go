@@ -33,6 +33,7 @@ type Config struct {
 	consoleStdout     bool
 	fileStdout        bool
 	outJSON           bool
+	durationEncoder   zapcore.DurationEncoder
 	division          string
 	path              string
 	compress          bool
@@ -59,6 +60,7 @@ func defaultConfig() *Config {
 		consoleStdout:     false,
 		fileStdout:        true,
 		outJSON:           false,
+		durationEncoder:   zapcore.SecondsDurationEncoder,
 		division:          "size",
 		path:              defaultPath,
 		compress:          true,
