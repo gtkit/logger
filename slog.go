@@ -144,4 +144,3 @@ func slogAttrToZapField(group string, attr slog.Attr) zap.Field {
 		return zap.Any(key, val.Any())
 	}
 }
-

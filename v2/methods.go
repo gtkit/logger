@@ -176,9 +176,78 @@ func (l *Logger) ctxFields(ctx context.Context, fields []zap.Field) []zap.Field 
 	return merged
 }
 
+// ctxKeysAndValues 把 contextFields 提取的 zap.Field 前置到 Sugar 风格的 keysAndValues。
+// Sugar 的 *w 系列方法识别 zap.Field 类型，因此以原 Field 形式注入即可。
+func (l *Logger) ctxKeysAndValues(ctx context.Context, kv []any) []any {
+	if l.contextFields == nil {
+		return kv
+	}
+	extracted := l.contextFields(ctx)
+	if len(extracted) == 0 {
+		return kv
+	}
+	merged := make([]any, 0, len(extracted)+len(kv))
+	for _, f := range extracted {
+		merged = append(merged, f)
+	}
+	merged = append(merged, kv...)
+	return merged
+}
+
+// DebugwCtx 以 Debug 级别记录 Sugar 风格 key-value 日志，并自动合并 ContextFieldsFunc 从 ctx 提取的字段。
+//
+// 与 Debugw 的差别：在调用 zap Sugar 之前，会通过 ctxKeysAndValues 把 contextFields(ctx) 提取的
+// zap.Field 前置到 keysAndValues。未配置 WithContextFields 时，行为等价于 Debugw。
+//
+// 用法：
+//
+//	log.DebugwCtx(ctx, "cache miss", "key", "user:42", "tier", "L2")
+func (l *Logger) DebugwCtx(ctx context.Context, msg string, keysAndValues ...any) {
+	l.sugar.Debugw(msg, l.ctxKeysAndValues(ctx, keysAndValues)...)
+}
+
+// InfowCtx 以 Info 级别记录 Sugar 风格 key-value 日志，并自动合并 ctx 字段。
+// 行为参见 DebugwCtx。
+func (l *Logger) InfowCtx(ctx context.Context, msg string, keysAndValues ...any) {
+	l.sugar.Infow(msg, l.ctxKeysAndValues(ctx, keysAndValues)...)
+}
+
+// WarnwCtx 以 Warn 级别记录 Sugar 风格 key-value 日志，并自动合并 ctx 字段。
+// 行为参见 DebugwCtx。
+func (l *Logger) WarnwCtx(ctx context.Context, msg string, keysAndValues ...any) {
+	l.sugar.Warnw(msg, l.ctxKeysAndValues(ctx, keysAndValues)...)
+}
+
+// ErrorwCtx 以 Error 级别记录 Sugar 风格 key-value 日志，并自动合并 ctx 字段。
+// 行为参见 DebugwCtx。
+func (l *Logger) ErrorwCtx(ctx context.Context, msg string, keysAndValues ...any) {
+	l.sugar.Errorw(msg, l.ctxKeysAndValues(ctx, keysAndValues)...)
+}
+
 func (l *Logger) LogIf(err error) {
 	if err != nil {
 		l.zap.Error("error occurred", zap.Error(err))
+	}
+}
+
+// WarnIf 在 err != nil 时以 Warn 级别记录一条日志。
+func (l *Logger) WarnIf(err error) {
+	if err != nil {
+		l.zap.Warn("warning occurred", zap.Error(err))
+	}
+}
+
+// LogIfCtx 在 err != nil 时以 Error 级别记录日志，并合并 ctx 注入的字段。
+func (l *Logger) LogIfCtx(ctx context.Context, err error) {
+	if err != nil {
+		l.zap.Error("error occurred", l.ctxFields(ctx, []zap.Field{zap.Error(err)})...)
+	}
+}
+
+// WarnIfCtx 在 err != nil 时以 Warn 级别记录日志，并合并 ctx 注入的字段。
+func (l *Logger) WarnIfCtx(ctx context.Context, err error) {
+	if err != nil {
+		l.zap.Warn("warning occurred", l.ctxFields(ctx, []zap.Field{zap.Error(err)})...)
 	}
 }
 

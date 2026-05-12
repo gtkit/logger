@@ -24,7 +24,7 @@ func NewCronAdapter(l *Logger) *CronAdapter {
 
 // Info implements cron.Logger.
 func (a *CronAdapter) Info(msg string, keysAndValues ...any) {
-	keysAndValues = cronFormatTimes(keysAndValues)
+	keysAndValues = cronNormalizeKVs(cronFormatTimes(keysAndValues))
 	a.log.Infof(
 		cronFormatString("[cron] INFO", len(keysAndValues)),
 		append([]any{msg}, keysAndValues...)...,
@@ -33,11 +33,19 @@ func (a *CronAdapter) Info(msg string, keysAndValues ...any) {
 
 // Error implements cron.Logger.
 func (a *CronAdapter) Error(err error, msg string, keysAndValues ...any) {
-	keysAndValues = cronFormatTimes(keysAndValues)
+	keysAndValues = cronNormalizeKVs(cronFormatTimes(keysAndValues))
 	a.log.Errorf(
 		cronFormatString("[cron] ERROR", len(keysAndValues)+2),
 		append([]any{msg, "error", err}, keysAndValues...)...,
 	)
+}
+
+// cronNormalizeKVs 保证 keysAndValues 长度为偶数；奇数尾元素补 "<MISSING>" 占位。
+func cronNormalizeKVs(kv []any) []any {
+	if len(kv)%2 == 0 {
+		return kv
+	}
+	return append(kv, "<MISSING>")
 }
 
 func cronFormatString(prefix string, numKeysAndValues int) string {

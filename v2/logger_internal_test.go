@@ -2,6 +2,7 @@ package logger
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -786,6 +787,28 @@ func TestCronAdapter_Error(t *testing.T) {
 	a.Error(nil, "test cron error", "key", "val")
 }
 
+func TestCronNormalizeKVs(t *testing.T) {
+	even := []any{"k1", "v1", "k2", "v2"}
+	got := cronNormalizeKVs(even)
+	if len(got) != 4 {
+		t.Fatalf("even input should not change length, got %d", len(got))
+	}
+
+	odd := []any{"k1", "v1", "k2"}
+	got = cronNormalizeKVs(odd)
+	if len(got) != 4 {
+		t.Fatalf("odd input should be padded to even, got len=%d", len(got))
+	}
+	if got[3] != "<MISSING>" {
+		t.Fatalf("odd input should be padded with <MISSING>, got %v", got[3])
+	}
+
+	got = cronNormalizeKVs(nil)
+	if len(got) != 0 {
+		t.Fatalf("nil should stay empty, got %d", len(got))
+	}
+}
+
 func TestRestyAdapter_ErrorfAndWarnf(t *testing.T) {
 	l := MustNew(WithConsole(false), WithFile(false))
 	defer l.Sync()
@@ -1278,4 +1301,325 @@ func TestDynamicChannelCacheLimit(t *testing.T) {
 	if got := l.state.dynamicChannelBasesCnt.Load(); got > maxDynamicChannels {
 		t.Fatalf("dynamic channel count = %d, should not exceed %d", got, maxDynamicChannels)
 	}
+}
+
+func TestSugarCtxMethods_InjectFields(t *testing.T) {
+	tempDir := t.TempDir()
+	path := filepath.Join(tempDir, "logs", "app")
+
+	ctxFn := func(ctx context.Context) []zap.Field {
+		if v, ok := ctx.Value(ctxKey{}).(string); ok {
+			return []zap.Field{zap.String("trace_id", v)}
+		}
+		return nil
+	}
+
+	l := MustNew(
+		WithConsole(false),
+		WithFile(true),
+		WithOutJSON(true),
+		WithPath(path),
+		WithLevel("debug"),
+		WithContextFields(ctxFn),
+	)
+	defer l.Sync()
+
+	ctx := context.WithValue(context.Background(), ctxKey{}, "trace-xyz")
+	l.DebugwCtx(ctx, "debug-w-ctx", "biz", "B1")
+	l.InfowCtx(ctx, "info-w-ctx", "biz", "B2")
+	l.WarnwCtx(ctx, "warn-w-ctx", "biz", "B3")
+	l.ErrorwCtx(ctx, "error-w-ctx", "biz", "B4")
+
+	content := readLogFile(t, path+"-debug.log")
+	for _, msg := range []string{"debug-w-ctx", "info-w-ctx", "warn-w-ctx", "error-w-ctx"} {
+		if !strings.Contains(content, msg) {
+			t.Fatalf("log missing message %q: %s", msg, content)
+		}
+	}
+	for _, kv := range []string{`"trace_id":"trace-xyz"`, `"biz":"B1"`, `"biz":"B2"`, `"biz":"B3"`, `"biz":"B4"`} {
+		if !strings.Contains(content, kv) {
+			t.Fatalf("log missing %q in:\n%s", kv, content)
+		}
+	}
+}
+
+func TestSugarCtxMethods_NoContextFields(t *testing.T) {
+	tempDir := t.TempDir()
+	path := filepath.Join(tempDir, "logs", "app")
+
+	l := MustNew(
+		WithConsole(false),
+		WithFile(true),
+		WithOutJSON(true),
+		WithPath(path),
+		WithLevel("debug"),
+	)
+	defer l.Sync()
+
+	l.InfowCtx(context.Background(), "no-ctx-fn", "biz", "OK")
+
+	content := readLogFile(t, path+"-debug.log")
+	if !strings.Contains(content, "no-ctx-fn") {
+		t.Fatalf("log missing message: %s", content)
+	}
+	if !strings.Contains(content, `"biz":"OK"`) {
+		t.Fatalf("log missing biz field: %s", content)
+	}
+	if strings.Contains(content, "trace_id") {
+		t.Fatalf("log should not contain trace_id when contextFields not configured: %s", content)
+	}
+}
+
+func TestWarnIfAndConditionalLoggers(t *testing.T) {
+	tempDir := t.TempDir()
+	path := filepath.Join(tempDir, "logs", "app")
+
+	ctxFn := func(ctx context.Context) []zap.Field {
+		if v, ok := ctx.Value(ctxKey{}).(string); ok {
+			return []zap.Field{zap.String("trace_id", v)}
+		}
+		return nil
+	}
+
+	l := MustNew(
+		WithConsole(false),
+		WithFile(true),
+		WithOutJSON(true),
+		WithPath(path),
+		WithLevel("debug"),
+		WithContextFields(ctxFn),
+	)
+	defer l.Sync()
+
+	// nil err 全部 no-op
+	l.WarnIf(nil)
+	l.LogIfCtx(context.Background(), nil)
+	l.WarnIfCtx(context.Background(), nil)
+
+	l.WarnIf(errors.New("warn-only-error"))
+
+	ctx := context.WithValue(context.Background(), ctxKey{}, "trc-cond")
+	l.LogIfCtx(ctx, errors.New("err-with-ctx"))
+	l.WarnIfCtx(ctx, errors.New("warn-with-ctx"))
+
+	content := readLogFile(t, path+"-debug.log")
+	for _, msg := range []string{"warn-only-error", "err-with-ctx", "warn-with-ctx"} {
+		if !strings.Contains(content, msg) {
+			t.Fatalf("log missing error message %q in:\n%s", msg, content)
+		}
+	}
+	traceCount := strings.Count(content, `"trace_id":"trc-cond"`)
+	if traceCount != 2 {
+		t.Fatalf("expected trace_id in 2 ctx-aware entries, got %d in:\n%s", traceCount, content)
+	}
+	errCount := strings.Count(content, `"error":`)
+	if errCount != 3 {
+		t.Fatalf("expected 3 error entries (nil err is no-op), got %d in:\n%s", errCount, content)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 路径冲突校验测试（覆盖新加的 validateChannelRoutes）
+// ---------------------------------------------------------------------------
+
+func TestValidateChannelRoutes_ChannelOverlapsDefaultWithoutDuplicate(t *testing.T) {
+	dir := t.TempDir()
+	sharedPath := filepath.Join(dir, "app")
+
+	cfg := defaultConfig()
+	cfg.path = sharedPath
+	cfg.channels = map[string]*channelConfig{
+		"order": {path: sharedPath, duplicateToDefault: false},
+	}
+
+	if err := validateChannelRoutes(cfg); err == nil {
+		t.Fatal("expected error when channel.path overlaps default path with duplicate=false")
+	} else if !strings.Contains(err.Error(), "overlaps default path") {
+		t.Fatalf("unexpected error message: %v", err)
+	}
+}
+
+func TestValidateChannelRoutes_ChannelOverlapsDefaultWithDuplicate(t *testing.T) {
+	dir := t.TempDir()
+	sharedPath := filepath.Join(dir, "app")
+
+	cfg := defaultConfig()
+	cfg.path = sharedPath
+	cfg.channels = map[string]*channelConfig{
+		"order": {path: sharedPath, duplicateToDefault: true},
+	}
+
+	if err := validateChannelRoutes(cfg); err == nil {
+		t.Fatal("expected error when channel.path overlaps default with duplicate=true")
+	} else if !strings.Contains(err.Error(), "must differ from default path") {
+		t.Fatalf("unexpected error message: %v", err)
+	}
+}
+
+func TestValidateChannelRoutes_TwoChannelsSamePath(t *testing.T) {
+	dir := t.TempDir()
+	conflictPath := filepath.Join(dir, "channels", "shared")
+
+	cfg := defaultConfig()
+	cfg.path = filepath.Join(dir, "default", "app")
+	cfg.channels = map[string]*channelConfig{
+		"order": {path: conflictPath, duplicateToDefault: false},
+		"audit": {path: conflictPath, duplicateToDefault: false},
+	}
+
+	err := validateChannelRoutes(cfg)
+	if err == nil {
+		t.Fatal("expected error when two channels share the same path")
+	}
+	if !strings.Contains(err.Error(), "conflicts with channel") {
+		t.Fatalf("unexpected error message: %v", err)
+	}
+}
+
+func TestValidateChannelRoutes_DistinctPathsOK(t *testing.T) {
+	dir := t.TempDir()
+	cfg := defaultConfig()
+	cfg.path = filepath.Join(dir, "default", "app")
+	cfg.channels = map[string]*channelConfig{
+		"order": {path: filepath.Join(dir, "ch", "order"), duplicateToDefault: true},
+		"audit": {path: filepath.Join(dir, "ch", "audit"), duplicateToDefault: false},
+	}
+
+	if err := validateChannelRoutes(cfg); err != nil {
+		t.Fatalf("expected no error for distinct paths, got: %v", err)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 多 channel 并发写入竞态测试
+// ---------------------------------------------------------------------------
+
+func TestMultiChannelConcurrentWrites(t *testing.T) {
+	dir := t.TempDir()
+	defaultPath := filepath.Join(dir, "default", "app")
+	chAPath := filepath.Join(dir, "ch_a", "a")
+	chBPath := filepath.Join(dir, "ch_b", "b")
+	chCPath := filepath.Join(dir, "ch_c", "c")
+
+	l := MustNew(
+		WithConsole(false),
+		WithFile(true),
+		WithOutJSON(true),
+		WithPath(defaultPath),
+		WithChannel("a", WithChannelPath(chAPath), WithChannelDuplicateToDefault(false)),
+		WithChannel("b", WithChannelPath(chBPath), WithChannelDuplicateToDefault(false)),
+		WithChannel("c", WithChannelPath(chCPath), WithChannelDuplicateToDefault(false)),
+	)
+	defer l.Sync()
+
+	const writesPerChannel = 200
+	var wg sync.WaitGroup
+	for _, chName := range []string{"a", "b", "c"} {
+		wg.Add(1)
+		go func(name string) {
+			defer wg.Done()
+			cl := l.Channel(name)
+			for i := 0; i < writesPerChannel; i++ {
+				cl.Info("concurrent-multi-channel",
+					zap.String("channel_tag", name),
+					zap.Int("seq", i),
+				)
+			}
+		}(chName)
+	}
+	wg.Wait()
+
+	for _, p := range []string{chAPath, chBPath, chCPath} {
+		content := readLogFile(t, p+"-info.log")
+		lines := strings.Count(content, "concurrent-multi-channel")
+		if lines != writesPerChannel {
+			t.Fatalf("channel %s: expected %d lines, got %d", p, writesPerChannel, lines)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// dailyWriteSyncer 跨天并发切换竞态测试
+// ---------------------------------------------------------------------------
+
+func TestDailyWriteSyncerConcurrentCrossDayRotation(t *testing.T) {
+	cfg := &Config{
+		path:       filepath.Join(t.TempDir(), "daily"),
+		level:      "info",
+		maxSize:    1,
+		maxAge:     1,
+		maxBackups: 1,
+	}
+
+	dw, err := newDailyWriteSyncer(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = dw.Close() })
+
+	dw.currentDate = "2000-01-01"
+
+	const goroutines = 32
+	const writesPerG = 50
+
+	var wg sync.WaitGroup
+	wg.Add(goroutines)
+	var totalBytes atomic.Int64
+	for g := 0; g < goroutines; g++ {
+		go func(gi int) {
+			defer wg.Done()
+			line := []byte(fmt.Sprintf("g%d-write\n", gi))
+			for i := 0; i < writesPerG; i++ {
+				n, werr := dw.Write(line)
+				if werr != nil {
+					t.Errorf("concurrent write err: %v", werr)
+					return
+				}
+				totalBytes.Add(int64(n))
+			}
+		}(g)
+	}
+	wg.Wait()
+
+	if dw.currentDate == "2000-01-01" {
+		t.Fatalf("currentDate not rotated, still: %q", dw.currentDate)
+	}
+	if totalBytes.Load() == 0 {
+		t.Fatal("no bytes written despite concurrent goroutines")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Buffered FlushInterval 自动刷写验证
+// ---------------------------------------------------------------------------
+
+func TestBufferedFlushIntervalAutoFlushes(t *testing.T) {
+	dir := t.TempDir()
+	logpath := filepath.Join(dir, "buffered")
+
+	l := MustNew(
+		WithConsole(false),
+		WithFile(true),
+		WithOutJSON(true),
+		WithPath(logpath),
+		WithBuffered(true),
+		WithBufferSize(1<<20),
+		WithFlushInterval(50*time.Millisecond),
+	)
+
+	l.Info("auto-flush-probe", zap.String("marker", "Z42"))
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		data, err := os.ReadFile(logpath + "-info.log")
+		if err == nil && strings.Contains(string(data), "Z42") {
+			l.Sync()
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	l.Sync()
+	data, _ := os.ReadFile(logpath + "-info.log")
+	t.Fatalf("auto-flush did not occur within 2s. File content after final Sync:\n%s", string(data))
 }

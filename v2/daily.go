@@ -71,6 +71,9 @@ func (d *dailyWriteSyncer) Write(p []byte) (int, error) {
 	return n, nil
 }
 
+// Sync 实现 zapcore.WriteSyncer.Sync——参见 v1 daily.go 中相同方法的详细注释。
+// 简言之：返回 nil 是有意为之，dailyWriteSyncer 无缓冲，且 lumberjack.Logger 不暴露
+// Sync/fsync 能力。zap 体系下所有 lumberjack 包装器在此点的行为一致。
 func (d *dailyWriteSyncer) Sync() error {
 	return nil
 }

@@ -71,6 +71,19 @@ func (d *dailyWriteSyncer) Write(p []byte) (int, error) {
 	return n, nil
 }
 
+// Sync 实现 zapcore.WriteSyncer.Sync。
+//
+// 返回 nil 是有意为之——zap WriteSyncer.Sync 的语义是"flush 任意 buffered writer"，
+// dailyWriteSyncer 不持有自己的缓冲（Write 直接落到 lumberjack.Logger），所以无需任何动作。
+//
+// 注意：本实现**不做磁盘级 fsync**。lumberjack.Logger v2.2.x 不暴露公开 Sync 方法，
+// 其内部 *os.File 也是私有的，所以无法在不引入反射/fork lumberjack 的前提下做 fsync。
+// 这也是 zap 体系下所有 lumberjack 包装器的统一行为——zap 把"耐久性"留给上层选择
+// （需要 fsync 的场景应替换底层 rotator，或在业务关键点显式 fsync 应用层数据）。
+//
+// 与 BufferedWriteSyncer 组合时：BufferedWriteSyncer.Stop/Sync 会先把自己的缓冲通过
+// inner.Write 刷出，然后调用 inner.Sync——前者已经把数据交给了 lumberjack（再到 kernel），
+// 后者在这里 no-op 不会引起数据丢失（kernel page cache 仍由 OS 兜底）。
 func (d *dailyWriteSyncer) Sync() error {
 	return nil
 }

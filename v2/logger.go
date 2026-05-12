@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -269,15 +270,16 @@ func buildLoggerSet(cfg *Config) (*builtLoggerSet, error) {
 		return nil, err
 	}
 
+	// 全配对路径冲突检查——在分配 channel core 之前做。
+	if err := validateChannelRoutes(cfg); err != nil {
+		closeClosers(defaultClosers)
+		return nil, err
+	}
+
 	allClosers := append([]io.Closer{}, defaultClosers...)
 	channelRoutes := make(map[string]*channelRoute, len(cfg.channels))
 
 	for name, channelCfg := range cfg.channels {
-		if err := validateChannelRoute(cfg, name, channelCfg); err != nil {
-			closeClosers(allClosers)
-			return nil, err
-		}
-
 		channelCore, channelClosers, buildErr := buildChannelCore(cfg, channelCfg, atomicLevel)
 		if buildErr != nil {
 			closeClosers(allClosers)
@@ -373,24 +375,47 @@ func closeClosers(closers []io.Closer) {
 	}
 }
 
-func validateChannelRoute(root *Config, name string, channel *channelConfig) error {
-	if !channel.duplicateToDefault {
-		return nil
-	}
+// validateChannelRoutes 对 root + 所有 channel 做全配对路径冲突检查。
+//
+// 冲突规则：
+//   - channel 与 root 同路径 → 错误（无论 duplicate-to-default 与否，都会引起竞态）
+//   - 两个 channel 同路径 → 错误（lumberjack 实例间会竞争 rotate）
+//
+// 命名按字典序遍历，确保错误信息确定性。
+func validateChannelRoutes(root *Config) error {
+	rootKey := normalizedPathKey(root.path)
+	seen := map[string]string{rootKey: ""}
 
-	if sameLogPath(root.path, channel.path) {
-		return fmt.Errorf("logger: channel %q path must differ from default path when duplicate-to-default is enabled", name)
+	names := make([]string, 0, len(root.channels))
+	for name := range root.channels {
+		names = append(names, name)
 	}
+	sort.Strings(names)
 
+	for _, name := range names {
+		ch := root.channels[name]
+		key := normalizedPathKey(ch.path)
+		owner, exists := seen[key]
+		if !exists {
+			seen[key] = name
+			continue
+		}
+		if owner == "" {
+			if ch.duplicateToDefault {
+				return fmt.Errorf("logger: channel %q path must differ from default path when duplicate-to-default is enabled", name)
+			}
+			return fmt.Errorf("logger: channel %q path %q overlaps default path; multiple writers would race on the same file", name, ch.path)
+		}
+		return fmt.Errorf("logger: channel %q path conflicts with channel %q (both resolve to %q)", name, owner, ch.path)
+	}
 	return nil
 }
 
-func sameLogPath(left, right string) bool {
-	cleanLeft := filepath.Clean(left)
-	cleanRight := filepath.Clean(right)
+// normalizedPathKey 路径规范化为可比较 key。Windows 大小写不敏感，其他平台敏感。
+func normalizedPathKey(path string) string {
+	clean := filepath.Clean(path)
 	if runtime.GOOS == "windows" {
-		return strings.EqualFold(cleanLeft, cleanRight)
+		return strings.ToLower(clean)
 	}
-
-	return cleanLeft == cleanRight
+	return clean
 }

@@ -277,6 +277,75 @@ func ctxFields(ctx context.Context, state *loggerState, fields []zap.Field) []za
 	return merged
 }
 
+// ctxKeysAndValues 把 contextFields 提取的 zap.Field 前置到 Sugar 风格的 keysAndValues。
+// Sugar 的 Infow/Warnw 等方法接受 ...any，其中 zap.Field 类型会被原样识别为结构化字段，
+// 因此这里以 zap.Field 形式注入，不展开为 k/v 对。
+func ctxKeysAndValues(ctx context.Context, state *loggerState, kv []any) []any {
+	if state.contextFields == nil {
+		return kv
+	}
+	extracted := state.contextFields(ctx)
+	if len(extracted) == 0 {
+		return kv
+	}
+	merged := make([]any, 0, len(extracted)+len(kv))
+	for _, f := range extracted {
+		merged = append(merged, f)
+	}
+	merged = append(merged, kv...)
+	return merged
+}
+
+// DebugwCtx 以 Debug 级别记录 Sugar 风格 key-value 日志，并自动合并 ContextFieldsFunc 从 ctx 提取的字段。
+//
+// 与 Debugw 的差别：在调用 zap Sugar 之前，会通过 ctxKeysAndValues 把 contextFields(ctx) 提取的
+// zap.Field 前置到 keysAndValues。未配置 WithContextFields 时，行为等价于 Debugw。
+//
+// 用法：
+//
+//	logger.DebugwCtx(ctx, "cache miss", "key", "user:42", "tier", "L2")
+func DebugwCtx(ctx context.Context, msg string, keysAndValues ...any) {
+	state := currentLoggerState()
+	if state == nil {
+		return
+	}
+	defer state.release()
+	state.sugar.Debugw(msg, ctxKeysAndValues(ctx, state, keysAndValues)...)
+}
+
+// InfowCtx 以 Info 级别记录 Sugar 风格 key-value 日志，并自动合并 ctx 字段。
+// 行为参见 DebugwCtx。
+func InfowCtx(ctx context.Context, msg string, keysAndValues ...any) {
+	state := currentLoggerState()
+	if state == nil {
+		return
+	}
+	defer state.release()
+	state.sugar.Infow(msg, ctxKeysAndValues(ctx, state, keysAndValues)...)
+}
+
+// WarnwCtx 以 Warn 级别记录 Sugar 风格 key-value 日志，并自动合并 ctx 字段。
+// 行为参见 DebugwCtx。
+func WarnwCtx(ctx context.Context, msg string, keysAndValues ...any) {
+	state := currentLoggerState()
+	if state == nil {
+		return
+	}
+	defer state.release()
+	state.sugar.Warnw(msg, ctxKeysAndValues(ctx, state, keysAndValues)...)
+}
+
+// ErrorwCtx 以 Error 级别记录 Sugar 风格 key-value 日志，并自动合并 ctx 字段。
+// 行为参见 DebugwCtx。
+func ErrorwCtx(ctx context.Context, msg string, keysAndValues ...any) {
+	state := currentLoggerState()
+	if state == nil {
+		return
+	}
+	defer state.release()
+	state.sugar.Errorw(msg, ctxKeysAndValues(ctx, state, keysAndValues)...)
+}
+
 func LogIf(err error) {
 	if err != nil {
 		state := currentLoggerState()
@@ -285,6 +354,42 @@ func LogIf(err error) {
 		}
 		defer state.release()
 		state.root.Error("error occurred", zap.Error(err))
+	}
+}
+
+// WarnIf 在 err != nil 时以 Warn 级别记录一条日志。语义与 LogIf 一致，仅级别不同。
+func WarnIf(err error) {
+	if err != nil {
+		state := currentLoggerState()
+		if state == nil {
+			return
+		}
+		defer state.release()
+		state.root.Warn("warning occurred", zap.Error(err))
+	}
+}
+
+// LogIfCtx 在 err != nil 时以 Error 级别记录日志，并合并 ctx 注入的字段。
+func LogIfCtx(ctx context.Context, err error) {
+	if err != nil {
+		state := currentLoggerState()
+		if state == nil {
+			return
+		}
+		defer state.release()
+		state.root.Error("error occurred", ctxFields(ctx, state, []zap.Field{zap.Error(err)})...)
+	}
+}
+
+// WarnIfCtx 在 err != nil 时以 Warn 级别记录日志，并合并 ctx 注入的字段。
+func WarnIfCtx(ctx context.Context, err error) {
+	if err != nil {
+		state := currentLoggerState()
+		if state == nil {
+			return
+		}
+		defer state.release()
+		state.root.Warn("warning occurred", ctxFields(ctx, state, []zap.Field{zap.Error(err)})...)
 	}
 }
 

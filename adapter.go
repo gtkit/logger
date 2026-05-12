@@ -19,7 +19,7 @@ func NewCronAdapter() *CronAdapter {
 
 // Info implements cron.Logger.
 func (a *CronAdapter) Info(msg string, keysAndValues ...any) {
-	keysAndValues = cronFormatTimes(keysAndValues)
+	keysAndValues = cronNormalizeKVs(cronFormatTimes(keysAndValues))
 	Infof(
 		cronFormatString("[cron] INFO", len(keysAndValues)),
 		append([]any{msg}, keysAndValues...)...,
@@ -28,11 +28,21 @@ func (a *CronAdapter) Info(msg string, keysAndValues ...any) {
 
 // Error implements cron.Logger.
 func (a *CronAdapter) Error(err error, msg string, keysAndValues ...any) {
-	keysAndValues = cronFormatTimes(keysAndValues)
+	keysAndValues = cronNormalizeKVs(cronFormatTimes(keysAndValues))
 	Errorf(
 		cronFormatString("[cron] ERROR", len(keysAndValues)+2),
 		append([]any{msg, "error", err}, keysAndValues...)...,
 	)
+}
+
+// cronNormalizeKVs 保证 keysAndValues 长度为偶数。
+// 上游违反 cron.Logger 契约（传奇数个参数）时，给最后一个孤立 key 补 "<MISSING>" 占位，
+// 避免 fmt 输出尾部出现 %!(EXTRA xxx) 噪音。
+func cronNormalizeKVs(kv []any) []any {
+	if len(kv)%2 == 0 {
+		return kv
+	}
+	return append(kv, "<MISSING>")
 }
 
 func cronFormatString(prefix string, numKeysAndValues int) string {
