@@ -228,6 +228,23 @@ logger.NewZap(
 
 队列满时推送静默丢弃（日志已写入文件，只丢通知），保证日志调用永不阻塞。
 
+### H 系列方法一览
+
+**`H` 前缀的方法 = 写日志 + 调用 Messager.Send()**。普通方法（`Info` / `Error` 等）只写日志；`H` 方法在写日志成功后额外触发消息推送：
+
+| 方法 | 日志级别 | 推送目标 | 说明 |
+|---|---|---|---|
+| `HInfo(msg, fields...)` | Info | `Messager.Send` | 写日志 + 默认渠道推送（结构化字段） |
+| `HInfof(format, args...)` | Info | `Messager.Send` | Sugar 风格 + 默认渠道推送 |
+| `HInfoTo(url, msg, fields...)` | Info | `Messager.SendTo(url, ...)` | 写日志 + 指定 URL 推送 |
+| `HInfoTof(url, format, args...)` | Info | `Messager.SendTo(url, ...)` | Sugar 风格 + 指定 URL 推送 |
+| `HError(msg, fields...)` | Error | `Messager.Send` | 同 HInfo，Error 级别 |
+| `HErrorf(format, args...)` | Error | `Messager.Send` | 同 HInfof，Error 级别 |
+| `HErrorTo(url, msg, fields...)` | Error | `Messager.SendTo(url, ...)` | 同 HInfoTo，Error 级别 |
+| `HErrorTof(url, format, args...)` | Error | `Messager.SendTo(url, ...)` | 同 HInfoTof，Error 级别 |
+
+未配置 `WithMessager` 时，`H` 方法等价于普通方法（推送部分静默跳过）。
+
 ## Context 支持
 
 通过 `WithContextFields` 注册提取函数，在日志中自动注入 trace_id、request_id 等链路追踪信息：
@@ -255,7 +272,12 @@ logger.ErrorCtx(ctx, "payment failed", zap.String("reason", "timeout"))
 logger.Channel("order").InfoCtx(ctx, "order shipped")
 ```
 
-可用方法：`DebugCtx`、`InfoCtx`、`WarnCtx`、`ErrorCtx`。
+可用方法：
+- 结构化字段风格：`DebugCtx`、`InfoCtx`、`WarnCtx`、`ErrorCtx`
+- Sugar key-value 风格：`DebugwCtx`、`InfowCtx`、`WarnwCtx`、`ErrorwCtx`
+- 条件日志：`LogIfCtx(ctx, err)`（Error 级，err != nil 时记录）、`WarnIfCtx(ctx, err)`（Warn 级）
+
+不带 ctx 的条件日志：`LogIf(err)` / `WarnIf(err)`。
 
 ## API 方法一览
 
@@ -274,6 +296,20 @@ Apache-2.0. See [LICENSE](./LICENSE).
 ### Sugar — key-value 风格
 
 `Debugw`、`Infow`、`Warnw`、`Errorw`
+
+### Context 注入（自动合并 contextFields）
+
+- 结构化字段：`DebugCtx`、`InfoCtx`、`WarnCtx`、`ErrorCtx`
+- Sugar key-value：`DebugwCtx`、`InfowCtx`、`WarnwCtx`、`ErrorwCtx`
+
+### 条件日志（err != nil 才记录）
+
+- `LogIf(err)` / `WarnIf(err)`：Error / Warn 级别
+- `LogIfCtx(ctx, err)` / `WarnIfCtx(ctx, err)`：带 ctx 字段注入
+
+### Hook 推送（写日志 + Messager.Send）
+
+`HInfo`、`HInfof`、`HInfoTo`、`HInfoTof`、`HError`、`HErrorf`、`HErrorTo`、`HErrorTof` —— 详见上文 "H 系列方法一览" 章节
 
 ```go
 logger.Infow("request processed", "method", "GET", "status", 200)

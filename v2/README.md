@@ -207,6 +207,23 @@ log := logger.MustNew(
 log.HError("payment failed", zap.String("order_id", "12345"))
 ```
 
+### H 系列方法一览
+
+**`H` 前缀的方法 = 写日志 + 调用 Messager.Send()**。普通方法（`Info` / `Error` 等）只写日志；`H` 方法在写日志成功后额外触发消息推送：
+
+| 方法 | 日志级别 | 推送目标 |
+|---|---|---|
+| `HInfo(msg, fields...)` | Info | `Messager.Send` |
+| `HInfof(format, args...)` | Info | `Messager.Send` |
+| `HInfoTo(url, msg, fields...)` | Info | `Messager.SendTo(url, ...)` |
+| `HInfoTof(url, format, args...)` | Info | `Messager.SendTo(url, ...)` |
+| `HError(msg, fields...)` | Error | `Messager.Send` |
+| `HErrorf(format, args...)` | Error | `Messager.Send` |
+| `HErrorTo(url, msg, fields...)` | Error | `Messager.SendTo(url, ...)` |
+| `HErrorTof(url, format, args...)` | Error | `Messager.SendTo(url, ...)` |
+
+未配置 `WithMessager` 时，`H` 方法等价于普通方法（推送部分静默跳过）。
+
 ## slog 桥接
 
 将 Go 标准库 `log/slog` 的日志统一写入 zap，适用于第三方库使用 slog 输出日志的场景：
@@ -256,6 +273,20 @@ log.Errorw("query failed", "table", "orders", "err", err)
 ```go
 log.Channel("order").Infow("created", "order_id", "A100")
 ```
+
+### Context 注入（自动合并 contextFields）
+
+- 结构化字段：`DebugCtx`、`InfoCtx`、`WarnCtx`、`ErrorCtx`
+- Sugar key-value：`DebugwCtx`、`InfowCtx`、`WarnwCtx`、`ErrorwCtx`
+
+### 条件日志（err != nil 才记录）
+
+- `LogIf(err)` / `WarnIf(err)`：Error / Warn 级别
+- `LogIfCtx(ctx, err)` / `WarnIfCtx(ctx, err)`：带 ctx 字段注入
+
+### Hook 推送（写日志 + Messager.Send）
+
+`HInfo`、`HInfof`、`HInfoTo`、`HInfoTof`、`HError`、`HErrorf`、`HErrorTo`、`HErrorTof` —— 详见上文 "H 系列方法一览" 章节
 
 ## 写入模式：WriteSyncer vs BufferedWriteSyncer
 

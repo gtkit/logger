@@ -1,4 +1,4 @@
-.PHONY: tool check  tag
+.PHONY: tool check tag release-check release-check-json
 
 
 LINT_TARGETS ?= ./...
@@ -11,6 +11,13 @@ tool: ## Lint Go code with the installed golangci-lint
 ## govulncheck 检查漏洞 go install golang.org/x/vuln/cmd/govulncheck@latest
 check:
 	govulncheck $(LINT_TARGETS)
+
+## release-check 多 module 发版审计（v1 + v2 都检查）；遵循全局规则 4-PRE
+release-check:
+	@bash scripts/check-modules.sh
+
+release-check-json:
+	@bash scripts/check-modules.sh --json
 
 ## 推送标签到远程仓库时，通常不需要指定分支
 tag:
