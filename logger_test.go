@@ -10,13 +10,13 @@ import (
 )
 
 // TestDefaultLogger 验证未调用 NewZap 时不会 panic.
-func TestDefaultLogger(t *testing.T) {
+func TestDefaultLogger(_ *testing.T) {
 	logger.Info("should not panic", zap.String("from", "default"))
 	logger.Infof("formatted default: %s", "hello")
 	logger.Debug("debug from default")
 }
 
-func TestNewZap(t *testing.T) {
+func TestNewZap(_ *testing.T) {
 	logger.NewZap(
 		logger.WithDivision("size"),
 		logger.WithConsole(true),
@@ -43,7 +43,7 @@ func TestNewZap(t *testing.T) {
 	logger.Zap().Named("auth").Info("user logged in", zap.String("user", "alice"))
 }
 
-func TestDailyDivision(t *testing.T) {
+func TestDailyDivision(_ *testing.T) {
 	logger.NewZap(
 		logger.WithDivision("daily"),
 		logger.WithConsole(true),
@@ -56,7 +56,7 @@ func TestDailyDivision(t *testing.T) {
 	logger.Infof("daily formatted: %s", "hello")
 }
 
-func TestConsoleOnly(t *testing.T) {
+func TestConsoleOnly(_ *testing.T) {
 	logger.NewZap(
 		logger.WithConsole(true),
 		logger.WithFile(false),
@@ -69,7 +69,7 @@ func TestConsoleOnly(t *testing.T) {
 	logger.Error("error message")
 }
 
-func TestRepeatedNewZap(t *testing.T) {
+func TestRepeatedNewZap(_ *testing.T) {
 	logger.NewZap(
 		logger.WithConsole(true),
 		logger.WithFile(true),
@@ -88,7 +88,7 @@ func TestRepeatedNewZap(t *testing.T) {
 	logger.Info("from second logger")
 }
 
-func TestLogIf(t *testing.T) {
+func TestLogIf(_ *testing.T) {
 	logger.NewZap(
 		logger.WithConsole(true),
 		logger.WithFile(false),
@@ -99,7 +99,7 @@ func TestLogIf(t *testing.T) {
 	logger.LogIf(errors.New("something went wrong"))
 }
 
-func TestAdapters(t *testing.T) {
+func TestAdapters(_ *testing.T) {
 	logger.NewZap(
 		logger.WithConsole(true),
 		logger.WithFile(false),

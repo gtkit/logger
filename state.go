@@ -30,6 +30,20 @@ type loggerState struct {
 	doneOnce          sync.Once
 	retired           atomic.Bool
 	refs              atomic.Int64
+	fallback          bool
+}
+
+// fallbackWarnOnce 保证"未初始化即打日志"的告警全进程只打一次。
+var fallbackWarnOnce sync.Once
+
+// warnFallbackUsage 在业务代码尚未调用 New()/NewZap() 就打日志时，往 stderr 告警一次。
+// 此时日志走的是开发期 fallback logger（console），WithPath/WithOutJSON/WithLevel 等配置
+// 均未生效——这是高发的 init 顺序错误，显式告警便于排查。
+func warnFallbackUsage() {
+	fallbackWarnOnce.Do(func() {
+		fmt.Fprintln(os.Stderr, "logger: 检测到在 New()/NewZap() 之前打日志，当前回退到开发期 logger（输出到 console），"+
+			"WithPath/WithOutJSON/WithLevel 等配置尚未生效——请确保在打日志前先初始化 logger。")
+	})
 }
 
 func newLoggerState(root *zap.Logger, channelBases map[string]*zap.Logger, closers []io.Closer, messager Messager, asyncMsg *asyncMessager, contextFields ContextFieldsFunc, atomicLevel zap.AtomicLevel) *loggerState {
@@ -83,6 +97,10 @@ func currentLoggerState() *loggerState {
 			return nil
 		}
 		if state.acquire() {
+			// 仅在"从未 New()"且确实用到 fallback 时告警一次；Sync() 之后的 fallback 不告警。
+			if state.fallback && !loggerInitialized.Load() {
+				warnFallbackUsage()
+			}
 			return state
 		}
 		// state 已 retired 但新 state 尚未通过 currentState.Store 公开。

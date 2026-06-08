@@ -63,6 +63,43 @@ func main() {
 }
 ```
 
+## ⚠ 正确使用须知（务必先读）
+
+### 1. `main` 里必须 `defer logger.Sync()` —— 否则会丢日志
+
+logger 默认及 `WithBuffered(true)` 模式下，日志先进缓冲/OS page cache，**进程退出前不 `Sync()` 就可能丢失最后一批日志**（缓冲模式默认 30s 刷写间隔，最多丢 30 秒）。务必在进程入口注册 flush，并配合信号做优雅退出：
+
+```go
+func main() {
+	logger.NewZap(logger.WithPath("./logs/app"), logger.WithOutJSON(true))
+
+	// 监听退出信号，确保收到 SIGINT/SIGTERM 时也能 flush。
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	defer logger.Sync() // 正常返回路径的兜底 flush
+
+	run(ctx)
+
+	<-ctx.Done()
+	logger.Sync() // 信号退出路径显式 flush
+}
+```
+
+> 注意：`os.Exit()` / `log.Fatal()` 不会执行 `defer`，调用前必须手动 `logger.Sync()`。
+
+### 2. 先 `New()/NewZap()` 再打日志
+
+在初始化之前调用 `logger.Info(...)` 等会**回退到开发期 console logger**，此时 `WithPath`/`WithOutJSON`/`WithLevel` 等配置均未生效。本库会在这种情况下向 stderr 告警一次，但正确做法是保证 init 顺序：进程启动最早期完成 `NewZap(...)`。
+
+### 3. 用稳定 message + 结构化字段，不要把变量拼进 message
+
+```go
+logger.Info("user login", zap.String("uid", uid))   // ✅ 推荐
+logger.Infof("user %s login", uid)                   // ❌ 每条 message 都不同
+```
+
+结构化字段便于检索；且 `WithSampling` 按 message 去重、`WithRedactKeys` 按字段名脱敏，**都依赖稳定 message + 字段化**才能生效。
+
 ## 初始化
 
 | 函数 | 说明 |
@@ -156,6 +193,8 @@ logger.WithChannel("audit",
 | `WithBuffered(b)` | 是否启用缓冲写入（BufferedWriteSyncer） | `false` |
 | `WithBufferSize(n)` | 缓冲区大小（字节），仅 `WithBuffered(true)` 时生效 | `256KB` |
 | `WithFlushInterval(d)` | 缓冲区自动刷写间隔，仅 `WithBuffered(true)` 时生效 | `30s` |
+| `WithSampling(first, thereafter)` | 启用采样：每 1s 窗口内同 level+message 先放行 `first` 条，之后每 `thereafter` 条放行一条 | 关闭 |
+| `WithRedactKeys(keys...)` | 对命中的结构化字段名脱敏，值替换为 `[REDACTED]` | 无 |
 | `WithChannel(name, ...opts)` | 注册独立 channel 文件路由 | 无 |
 
 ### ChannelOption
@@ -186,6 +225,70 @@ logger.WithChannel("audit",
 ```
 
 每天切换到新文件；同一天内超过 `MaxSize` 时，仍由 lumberjack 按大小继续 rotate。
+
+**历史文件清理**：daily 模式每天用不同文件名新建 lumberjack，而 lumberjack 自带的 `MaxAge`/`MaxBackups` 只能清理「单个文件名派生的备份」，无法跨天删除昨天起的整份日志。为此本库在**进程启动**和**每次跨天切换**时异步触发一次回收，按已有的 `WithMaxAge` / `WithMaxBackups` 删除过期或超量的历史日切文件（含 `.log.gz` 压缩档），使 daily 与 size 模式的保留语义一致，无需额外配置。
+
+- 清理在后台 goroutine 执行，不阻塞日志写入；同一时刻至多一个回收任务。
+- `MaxAge` 与 `MaxBackups` 同时为 0 时，关闭清理（历史文件全部保留）。
+- 完全 idle（零写入）时不会跨天触发，但下次进程启动会补清积压。
+
+## 采样（高频日志降噪）
+
+热循环里某条日志每秒打几万次时，会打爆磁盘 IO、拖垮下游、瞬间填满异步推送队列。`WithSampling` 用 zap 原生采样器按 message 去重限流：
+
+```go
+logger.NewZap(
+	logger.WithPath("./logs/app"),
+	logger.WithSampling(100, 100), // 每秒同 message 先放行 100 条，之后每 100 条放行 1 条
+)
+```
+
+- 默认关闭（不配置即全量输出）。
+- `thereafter` 为 0 表示首批之后全部丢弃。
+- channel 继承相同采样配置。
+- ⚠ 采样按 **message 文本**去重，务必用稳定 message + 结构化字段，不要把变量拼进 message。
+
+## 字段脱敏（PII / 密钥合规）
+
+```go
+logger.NewZap(
+	logger.WithPath("./logs/app"),
+	logger.WithRedactKeys("password", "token", "authorization", "id_card", "phone"),
+)
+
+logger.Info("login", zap.String("user", "bob"), zap.String("password", "secret"))
+// 输出: ... "user":"bob","password":"[REDACTED]"
+```
+
+- 按字段 Key 精确匹配（区分大小写），命中字段值替换为 `[REDACTED]`。
+- 仅作用于结构化字段；拼进 message 文本的敏感信息不受影响。
+- 不配置时零开销（不包装 core）。
+
+## 强制团队正确使用（golangci-lint depguard）
+
+为在 CI 层面强制「业务必须用 gtkit/logger、禁止 `log` / `log/slog` / `fmt.Print*` 打日志」，在**使用方项目**的 `.golangci.yml` 加入：
+
+```yaml
+linters:
+  enable:
+    - depguard
+    - forbidigo
+  settings:
+    depguard:
+      rules:
+        main:
+          deny:
+            - pkg: "log"
+              desc: "业务日志请用 github.com/gtkit/logger"
+            - pkg: "log/slog"
+              desc: "禁止把 slog 作为主日志栈，请用 github.com/gtkit/logger"
+    forbidigo:
+      forbid:
+        - pattern: "^fmt\\.Print.*$"
+          msg: "禁止用 fmt.Print* 打日志，请用 github.com/gtkit/logger"
+```
+
+> 机械强制优于口头约定——把规则交给 lint，新人和 AI 都绕不过去。
 
 ## 第三方库适配器
 

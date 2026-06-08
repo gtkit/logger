@@ -37,7 +37,7 @@ func TestNew(t *testing.T) {
 	log.Infow("sugar kv", "key", "value", "count", 3)
 }
 
-func TestMustNew(t *testing.T) {
+func TestMustNew(_ *testing.T) {
 	log := logger.MustNew(
 		logger.WithConsole(true),
 		logger.WithFile(false),
@@ -50,7 +50,7 @@ func TestMustNew(t *testing.T) {
 	log.Error("error message")
 }
 
-func TestWith(t *testing.T) {
+func TestWith(_ *testing.T) {
 	log := logger.MustNew(
 		logger.WithConsole(true),
 		logger.WithFile(false),
@@ -65,7 +65,7 @@ func TestWith(t *testing.T) {
 	log.Info("original logger, no request_id")
 }
 
-func TestNamed(t *testing.T) {
+func TestNamed(_ *testing.T) {
 	log := logger.MustNew(
 		logger.WithConsole(true),
 		logger.WithFile(false),
@@ -76,7 +76,7 @@ func TestNamed(t *testing.T) {
 	authLog.Info("user logged in", zap.String("user", "alice"))
 }
 
-func TestDailyDivision(t *testing.T) {
+func TestDailyDivision(_ *testing.T) {
 	log := logger.MustNew(
 		logger.WithDivision("daily"),
 		logger.WithConsole(true),
@@ -89,7 +89,7 @@ func TestDailyDivision(t *testing.T) {
 	log.Infof("daily formatted: %s", "hello")
 }
 
-func TestLogIf(t *testing.T) {
+func TestLogIf(_ *testing.T) {
 	log := logger.MustNew(
 		logger.WithConsole(true),
 		logger.WithFile(false),
@@ -103,7 +103,7 @@ func TestLogIf(t *testing.T) {
 	log.LogIf(errors.New("something went wrong"))
 }
 
-func TestAdapters(t *testing.T) {
+func TestAdapters(_ *testing.T) {
 	log := logger.MustNew(
 		logger.WithConsole(true),
 		logger.WithFile(false),

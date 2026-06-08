@@ -1,7 +1,6 @@
 package logger
 
 import (
-	"context"
 	"errors"
 	"testing"
 
@@ -32,7 +31,7 @@ func BenchmarkInfoCtx_NoContextFields(b *testing.B) {
 	restore := installBenchmarkState(b)
 	defer restore()
 
-	ctx := context.Background()
+	ctx := b.Context()
 	b.ReportAllocs()
 	b.ResetTimer()
 
@@ -47,7 +46,7 @@ func BenchmarkInfowCtx_NoContextFields(b *testing.B) {
 	restore := installBenchmarkState(b)
 	defer restore()
 
-	ctx := context.Background()
+	ctx := b.Context()
 	b.ReportAllocs()
 	b.ResetTimer()
 

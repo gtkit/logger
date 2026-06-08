@@ -34,6 +34,10 @@ var (
 	globalMu         sync.Mutex
 	currentState     atomic.Pointer[loggerState]
 
+	// loggerInitialized 在首次成功 New() 后置为 true，用于区分"从未初始化"与"已初始化"。
+	// fallback 告警只在从未 New() 的情况下触发——Sync() 之后的 fallback 不再告警。
+	loggerInitialized atomic.Bool
+
 	levelMap = map[string]zapcore.Level{
 		"debug":  zapcore.DebugLevel,
 		"info":   zapcore.InfoLevel,
@@ -50,24 +54,27 @@ func init() {
 }
 
 type logConfig struct {
-	consoleStdout     bool
-	fileStdout        bool
-	outJSON           bool
-	durationEncoder   zapcore.DurationEncoder
-	division          string
-	path              string
-	compress          bool
-	maxAge            int
-	maxBackups        int
-	maxSize           int
-	level             string
-	messager          Messager
-	messagerQueueSize int
-	contextFields     ContextFieldsFunc
-	channels          map[string]*channelConfig
-	buffered          bool
-	bufferSize        int
-	flushInterval     time.Duration
+	consoleStdout      bool
+	fileStdout         bool
+	outJSON            bool
+	durationEncoder    zapcore.DurationEncoder
+	division           string
+	path               string
+	compress           bool
+	maxAge             int
+	maxBackups         int
+	maxSize            int
+	level              string
+	messager           Messager
+	messagerQueueSize  int
+	contextFields      ContextFieldsFunc
+	channels           map[string]*channelConfig
+	buffered           bool
+	bufferSize         int
+	flushInterval      time.Duration
+	samplingFirst      int
+	samplingThereafter int
+	fieldRedactor      func([]zapcore.Field) []zapcore.Field
 }
 
 type channelConfig struct {
@@ -107,6 +114,7 @@ func New(opts ...Option) error {
 
 	previous := swapLoggerState(state, true)
 	retireLoggerState(previous)
+	loggerInitialized.Store(true)
 	return nil
 }
 
@@ -329,6 +337,17 @@ func buildCore(cfg *logConfig, lvl zap.AtomicLevel) (zapcore.Core, []io.Closer, 
 		lvl,
 	)
 
+	// 采样：同一 tick 内（1s）相同 level+message 先放行 first 条，之后每 thereafter 条放行一条。
+	// 防止热循环里的高频日志打爆磁盘 / 拖垮下游。两值均为 0 时不包装（默认关闭）。
+	if cfg.samplingFirst > 0 || cfg.samplingThereafter > 0 {
+		core = zapcore.NewSamplerWithOptions(core, time.Second, cfg.samplingFirst, cfg.samplingThereafter)
+	}
+
+	// 字段脱敏：包在最外层，确保 With() 追加的字段同样过脱敏。nil 时不包装（零开销）。
+	if cfg.fieldRedactor != nil {
+		core = newRedactCore(core, cfg.fieldRedactor)
+	}
+
 	return core, closers, nil
 }
 
@@ -357,7 +376,9 @@ func newFallbackState() *loggerState {
 		logger = zap.NewNop()
 	}
 
-	return newLoggerState(logger, nil, nil, nil, nil, nil, zap.NewAtomicLevelAt(zapcore.DebugLevel))
+	state := newLoggerState(logger, nil, nil, nil, nil, nil, zap.NewAtomicLevelAt(zapcore.DebugLevel))
+	state.fallback = true
+	return state
 }
 
 func swapLoggerState(next *loggerState, replaceGlobals bool) *loggerState {

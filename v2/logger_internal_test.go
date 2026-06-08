@@ -386,7 +386,7 @@ func TestAsyncMessager_NonBlocking(t *testing.T) {
 	}
 }
 
-func TestAsyncMessager_QueueFullDropsSilently(t *testing.T) {
+func TestAsyncMessager_QueueFullDropsSilently(_ *testing.T) {
 	// Use a blocking inner to fill the queue
 	blocker := &blockingMessager{block: make(chan struct{}), started: make(chan struct{})}
 	am := newAsyncMessager(blocker, 2)
@@ -411,14 +411,14 @@ type blockingMessager struct {
 	startedOnce sync.Once
 }
 
-func (m *blockingMessager) Send(msg string) {
+func (m *blockingMessager) Send(_ string) {
 	if m.started != nil {
 		m.startedOnce.Do(func() { close(m.started) })
 	}
 	<-m.block
 }
 
-func (m *blockingMessager) SendTo(url, msg string) {
+func (m *blockingMessager) SendTo(_ string, _ string) {
 	if m.started != nil {
 		m.startedOnce.Do(func() { close(m.started) })
 	}
@@ -659,7 +659,7 @@ func TestCtxMethods_InjectFields(t *testing.T) {
 	)
 	defer l.Sync()
 
-	ctx := context.WithValue(context.Background(), ctxKey{}, "abc-123")
+	ctx := context.WithValue(t.Context(), ctxKey{}, "abc-123")
 
 	l.InfoCtx(ctx, "info-ctx-msg")
 	l.WarnCtx(ctx, "warn-ctx-msg")
@@ -692,7 +692,7 @@ func TestDebugCtx_InjectsFields(t *testing.T) {
 		messager:      msg,
 		contextFields: ctxFn,
 	}
-	ctx := context.WithValue(context.Background(), ctxKey{}, "debug-trace")
+	ctx := context.WithValue(t.Context(), ctxKey{}, "debug-trace")
 	// Should not panic; covers DebugCtx path
 	l.DebugCtx(ctx, "debug-ctx-msg")
 }
@@ -763,7 +763,7 @@ func TestWithMessagerQueueSize(t *testing.T) {
 
 func TestWithContextFields(t *testing.T) {
 	cfg := defaultConfig()
-	fn := func(ctx context.Context) []zap.Field {
+	fn := func(_ context.Context) []zap.Field {
 		return []zap.Field{zap.String("k", "v")}
 	}
 	if err := WithContextFields(fn)(cfg); err != nil {
@@ -778,7 +778,7 @@ func TestWithContextFields(t *testing.T) {
 // Adapter tests
 // ============================================================
 
-func TestCronAdapter_Error(t *testing.T) {
+func TestCronAdapter_Error(_ *testing.T) {
 	l := MustNew(WithConsole(false), WithFile(false))
 	defer l.Sync()
 
@@ -809,7 +809,7 @@ func TestCronNormalizeKVs(t *testing.T) {
 	}
 }
 
-func TestRestyAdapter_ErrorfAndWarnf(t *testing.T) {
+func TestRestyAdapter_ErrorfAndWarnf(_ *testing.T) {
 	l := MustNew(WithConsole(false), WithFile(false))
 	defer l.Sync()
 
@@ -921,10 +921,10 @@ func TestSlogHandler_EnabledRespectsLevel(t *testing.T) {
 	defer l.Sync()
 
 	h := l.SlogHandler()
-	if h.Enabled(context.Background(), slog.LevelInfo) {
+	if h.Enabled(t.Context(), slog.LevelInfo) {
 		t.Fatal("slog handler should not enable Info when logger level is error")
 	}
-	if !h.Enabled(context.Background(), slog.LevelError) {
+	if !h.Enabled(t.Context(), slog.LevelError) {
 		t.Fatal("slog handler should enable Error when logger level is error")
 	}
 }
@@ -1324,7 +1324,7 @@ func TestSugarCtxMethods_InjectFields(t *testing.T) {
 	)
 	defer l.Sync()
 
-	ctx := context.WithValue(context.Background(), ctxKey{}, "trace-xyz")
+	ctx := context.WithValue(t.Context(), ctxKey{}, "trace-xyz")
 	l.DebugwCtx(ctx, "debug-w-ctx", "biz", "B1")
 	l.InfowCtx(ctx, "info-w-ctx", "biz", "B2")
 	l.WarnwCtx(ctx, "warn-w-ctx", "biz", "B3")
@@ -1356,7 +1356,7 @@ func TestSugarCtxMethods_NoContextFields(t *testing.T) {
 	)
 	defer l.Sync()
 
-	l.InfowCtx(context.Background(), "no-ctx-fn", "biz", "OK")
+	l.InfowCtx(t.Context(), "no-ctx-fn", "biz", "OK")
 
 	content := readLogFile(t, path+"-debug.log")
 	if !strings.Contains(content, "no-ctx-fn") {
@@ -1393,12 +1393,12 @@ func TestWarnIfAndConditionalLoggers(t *testing.T) {
 
 	// nil err 全部 no-op
 	l.WarnIf(nil)
-	l.LogIfCtx(context.Background(), nil)
-	l.WarnIfCtx(context.Background(), nil)
+	l.LogIfCtx(t.Context(), nil)
+	l.WarnIfCtx(t.Context(), nil)
 
 	l.WarnIf(errors.New("warn-only-error"))
 
-	ctx := context.WithValue(context.Background(), ctxKey{}, "trc-cond")
+	ctx := context.WithValue(t.Context(), ctxKey{}, "trc-cond")
 	l.LogIfCtx(ctx, errors.New("err-with-ctx"))
 	l.WarnIfCtx(ctx, errors.New("warn-with-ctx"))
 
@@ -1519,7 +1519,7 @@ func TestMultiChannelConcurrentWrites(t *testing.T) {
 		go func(name string) {
 			defer wg.Done()
 			cl := l.Channel(name)
-			for i := 0; i < writesPerChannel; i++ {
+			for i := range writesPerChannel {
 				cl.Info("concurrent-multi-channel",
 					zap.String("channel_tag", name),
 					zap.Int("seq", i),
@@ -1565,11 +1565,11 @@ func TestDailyWriteSyncerConcurrentCrossDayRotation(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(goroutines)
 	var totalBytes atomic.Int64
-	for g := 0; g < goroutines; g++ {
+	for g := range goroutines {
 		go func(gi int) {
 			defer wg.Done()
 			line := []byte(fmt.Sprintf("g%d-write\n", gi))
-			for i := 0; i < writesPerG; i++ {
+			for range writesPerG {
 				n, werr := dw.Write(line)
 				if werr != nil {
 					t.Errorf("concurrent write err: %v", werr)

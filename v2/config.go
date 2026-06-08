@@ -46,24 +46,27 @@ var levelMap = map[string]zapcore.Level{
 //
 //	l, err := logger.New(logger.WithPath("/var/log/app"), logger.WithOutJSON(true))
 type Config struct {
-	consoleStdout     bool
-	fileStdout        bool
-	outJSON           bool
-	durationEncoder   zapcore.DurationEncoder
-	division          string
-	path              string
-	compress          bool
-	maxAge            int
-	maxBackups        int
-	maxSize           int
-	level             string
-	messager          Messager
-	messagerQueueSize int
-	contextFields     ContextFieldsFunc
-	channels          map[string]*channelConfig
-	buffered          bool
-	bufferSize        int
-	flushInterval     time.Duration
+	consoleStdout      bool
+	fileStdout         bool
+	outJSON            bool
+	durationEncoder    zapcore.DurationEncoder
+	division           string
+	path               string
+	compress           bool
+	maxAge             int
+	maxBackups         int
+	maxSize            int
+	level              string
+	messager           Messager
+	messagerQueueSize  int
+	contextFields      ContextFieldsFunc
+	channels           map[string]*channelConfig
+	buffered           bool
+	bufferSize         int
+	flushInterval      time.Duration
+	samplingFirst      int
+	samplingThereafter int
+	fieldRedactor      func([]zapcore.Field) []zapcore.Field
 }
 
 type channelConfig struct {

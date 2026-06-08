@@ -56,7 +56,7 @@ func TestDailyWriteSyncerRotatesOnFullDateChange(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	wantDate := time.Now().Format("2006-01-02")
+	wantDate := time.Now().Format(time.DateOnly)
 	if dw.currentDate != wantDate {
 		t.Fatalf("currentDate = %q, want %q", dw.currentDate, wantDate)
 	}
@@ -92,7 +92,7 @@ func TestHInfoIncludesFieldsInMessager(t *testing.T) {
 	}
 }
 
-func TestGlobalLoggerConcurrentReconfigure(t *testing.T) {
+func TestGlobalLoggerConcurrentReconfigure(_ *testing.T) {
 	NewZap(WithConsole(false), WithFile(false))
 	defer Sync()
 
@@ -402,6 +402,7 @@ func TestFormatMsg(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			got := formatMsg(tt.template, tt.args)
 			if got != tt.want {
 				t.Fatalf("formatMsg(%q, %v) = %q, want %q", tt.template, tt.args, got, tt.want)
@@ -465,7 +466,7 @@ func TestAsyncMessagerCloseDrainsQueue(t *testing.T) {
 	}
 }
 
-func TestAsyncMessagerQueueFullDrops(t *testing.T) {
+func TestAsyncMessagerQueueFullDrops(_ *testing.T) {
 	// blockingMessager blocks on each Send to fill the queue.
 	blocker := make(chan struct{})
 	inner := &blockingMessager{block: blocker, started: make(chan struct{})}
@@ -490,13 +491,13 @@ type blockingMessager struct {
 	count       atomic.Int64
 }
 
-func (m *blockingMessager) Send(msg string) {
+func (m *blockingMessager) Send(_ string) {
 	m.startedOnce.Do(func() { close(m.started) })
 	<-m.block
 	m.count.Add(1)
 }
 
-func (m *blockingMessager) SendTo(url, msg string) {
+func (m *blockingMessager) SendTo(_ string, _ string) {
 	m.startedOnce.Do(func() { close(m.started) })
 	<-m.block
 	m.count.Add(1)
@@ -688,7 +689,7 @@ func TestSugarCtxMethodsInjectFields(t *testing.T) {
 	)
 	defer Sync()
 
-	ctx := context.WithValue(context.Background(), ctxKey{}, "trace-xyz")
+	ctx := context.WithValue(t.Context(), ctxKey{}, "trace-xyz")
 	DebugwCtx(ctx, "debug-w-ctx", "biz", "B1")
 	InfowCtx(ctx, "info-w-ctx", "biz", "B2")
 	WarnwCtx(ctx, "warn-w-ctx", "biz", "B3")
@@ -721,7 +722,7 @@ func TestSugarCtxMethodsWithoutContextFields(t *testing.T) {
 	)
 	defer Sync()
 
-	InfowCtx(context.Background(), "no-ctx-fn", "biz", "OK")
+	InfowCtx(t.Context(), "no-ctx-fn", "biz", "OK")
 
 	content := readLogFile(t, logpath+"-debug.log")
 	if !strings.Contains(content, "no-ctx-fn") {
@@ -754,13 +755,13 @@ func TestWarnIfAndConditionalLoggers(t *testing.T) {
 	)
 	defer Sync()
 
-	WarnIf(nil)                          // no-op
-	LogIfCtx(context.Background(), nil)  // no-op
-	WarnIfCtx(context.Background(), nil) // no-op
+	WarnIf(nil)                 // no-op
+	LogIfCtx(t.Context(), nil)  // no-op
+	WarnIfCtx(t.Context(), nil) // no-op
 
 	WarnIf(errors.New("warn-only-error"))
 
-	ctx := context.WithValue(context.Background(), ctxKey{}, "trc-cond")
+	ctx := context.WithValue(t.Context(), ctxKey{}, "trc-cond")
 	LogIfCtx(ctx, errors.New("err-with-ctx"))
 	WarnIfCtx(ctx, errors.New("warn-with-ctx"))
 
@@ -801,7 +802,7 @@ func TestContextFieldsInjection(t *testing.T) {
 	)
 	defer Sync()
 
-	ctx := context.WithValue(context.Background(), ctxKey{}, "abc-123")
+	ctx := context.WithValue(t.Context(), ctxKey{}, "abc-123")
 	DebugCtx(ctx, "debug-ctx-msg")
 	InfoCtx(ctx, "info-ctx-msg")
 	WarnCtx(ctx, "warn-ctx-msg")
@@ -969,7 +970,7 @@ func TestChannelCtxMethods(t *testing.T) {
 	)
 	defer Sync()
 
-	ctx := context.WithValue(context.Background(), ctxKey{}, "trace-xyz")
+	ctx := context.WithValue(t.Context(), ctxKey{}, "trace-xyz")
 	ch := Channel("ctx")
 
 	ch.DebugCtx(ctx, "ch-debug-ctx")
@@ -1112,7 +1113,7 @@ func TestOptionWithMessagerQueueSize(t *testing.T) {
 func TestOptionWithContextFields(t *testing.T) {
 	t.Parallel()
 	cfg := &logConfig{}
-	fn := func(ctx context.Context) []zap.Field {
+	fn := func(_ context.Context) []zap.Field {
 		return []zap.Field{zap.String("test", "val")}
 	}
 	if err := WithContextFields(fn)(cfg); err != nil {
@@ -1155,7 +1156,7 @@ func TestUndo(t *testing.T) {
 // 14. Adapters
 // ---------------------------------------------------------------------------
 
-func TestCronAdapterError(t *testing.T) {
+func TestCronAdapterError(_ *testing.T) {
 	NewZap(WithConsole(false), WithFile(false))
 	defer Sync()
 
@@ -1190,7 +1191,7 @@ func TestCronNormalizeKVs(t *testing.T) {
 	}
 }
 
-func TestRestyAdapterMethods(t *testing.T) {
+func TestRestyAdapterMethods(_ *testing.T) {
 	NewZap(WithConsole(false), WithFile(false))
 	defer Sync()
 
@@ -1201,7 +1202,7 @@ func TestRestyAdapterMethods(t *testing.T) {
 	a.Debugf("resty debug %s", "test")
 }
 
-func TestESAdapterPrintf(t *testing.T) {
+func TestESAdapterPrintf(_ *testing.T) {
 	NewZap(WithConsole(false), WithFile(false))
 	defer Sync()
 
@@ -1246,7 +1247,7 @@ func TestNewZapWithMessager(t *testing.T) {
 // Extra: LogIf with nil error should not log
 // ---------------------------------------------------------------------------
 
-func TestLogIfNilError(t *testing.T) {
+func TestLogIfNilError(_ *testing.T) {
 	NewZap(WithConsole(false), WithFile(false))
 	defer Sync()
 
@@ -1377,10 +1378,10 @@ func TestSlogHandlerRespectsLevel(t *testing.T) {
 	defer Sync()
 
 	h := SlogHandler()
-	if h.Enabled(context.Background(), slog.LevelInfo) {
+	if h.Enabled(t.Context(), slog.LevelInfo) {
 		t.Fatal("SlogHandler.Enabled(Info) should be false when level is error")
 	}
-	if !h.Enabled(context.Background(), slog.LevelError) {
+	if !h.Enabled(t.Context(), slog.LevelError) {
 		t.Fatal("SlogHandler.Enabled(Error) should be true when level is error")
 	}
 }
@@ -1897,7 +1898,7 @@ func TestMultiChannelConcurrentWrites(t *testing.T) {
 		go func(name string) {
 			defer wg.Done()
 			logger := Channel(name)
-			for i := 0; i < writesPerChannel; i++ {
+			for i := range writesPerChannel {
 				logger.Info("concurrent-multi-channel",
 					zap.String("channel_tag", name),
 					zap.Int("seq", i),
@@ -1944,11 +1945,11 @@ func TestDailyWriteSyncerConcurrentCrossDayRotation(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(goroutines)
 	var totalBytes atomic.Int64
-	for g := 0; g < goroutines; g++ {
+	for g := range goroutines {
 		go func(gi int) {
 			defer wg.Done()
 			line := []byte(fmt.Sprintf("g%d-write\n", gi))
-			for i := 0; i < writesPerG; i++ {
+			for range writesPerG {
 				n, werr := dw.Write(line)
 				if werr != nil {
 					t.Errorf("concurrent write err: %v", werr)

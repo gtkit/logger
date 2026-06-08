@@ -333,6 +333,17 @@ func buildCore(cfg *Config, lvl zap.AtomicLevel) (zapcore.Core, []io.Closer, err
 		lvl,
 	)
 
+	// 采样：同一 tick 内（1s）相同 level+message 先放行 first 条，之后每 thereafter 条放行一条。
+	// 防止热循环里的高频日志打爆磁盘 / 拖垮下游。两值均为 0 时不包装（默认关闭）。
+	if cfg.samplingFirst > 0 || cfg.samplingThereafter > 0 {
+		core = zapcore.NewSamplerWithOptions(core, time.Second, cfg.samplingFirst, cfg.samplingThereafter)
+	}
+
+	// 字段脱敏：包在最外层，确保 With() 追加的字段同样过脱敏。nil 时不包装（零开销）。
+	if cfg.fieldRedactor != nil {
+		core = newRedactCore(core, cfg.fieldRedactor)
+	}
+
 	return core, closers, nil
 }
 

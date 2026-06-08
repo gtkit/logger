@@ -11,6 +11,24 @@
 
 ---
 
+## logger v1.7.1 / v2.1.1 — 2026-06-08
+
+### Added — 新增公开 API（向后兼容）
+
+- `WithSampling(first, thereafter int)`（v1 + v2）—— 启用 zap 原生采样（tick 1s），同 level+message 每窗口先放行 `first` 条、之后每 `thereafter` 条放行一条，防高频日志打爆磁盘 / 拖垮下游。默认关闭，channel 继承。
+- `WithRedactKeys(keys ...string)`（v1 + v2）—— 按字段名脱敏，命中字段值替换为 `[REDACTED]`，用于屏蔽 password / token / 手机号等敏感信息。默认不启用时零开销。
+- **fallback 告警**（仅 v1）—— 在 `New()`/`NewZap()` 之前打日志（走开发期 console fallback、配置未生效）时，向 stderr 告警一次，便于发现 init 顺序错误。v2 为实例式 API（`New` 返回 `*Logger`），不存在该 footgun，故不涉及。
+
+### Fixed — 修复
+
+- **daily 模式历史文件不再无限堆积**。
+  - **旧行为**：`WithDivision("daily")` 下，每天用不同文件名新建 lumberjack，而 lumberjack 的 `MaxAge`/`MaxBackups` 只清理「单个文件名派生的备份」，因此**昨天起的整份日切文件永远不会被删除**——`WithMaxAge` / `WithMaxBackups` 在 daily 模式下被静默忽略，磁盘持续增长。
+  - **新行为**：在**进程启动**与**每次跨天切换**时，异步按 `MaxAge` / `MaxBackups` 回收 `{path}-{level}-*.log`（含 `.log.gz`）历史文件，使 daily 与 size 模式保留语义一致。清理在后台 goroutine 执行、不阻塞写入、单飞（同一时刻至多一个），并挂入 writer 的 `Close` 生命周期（`Close` 会等待在途回收完成，无 goroutine 逃逸）。
+  - ⚠ **行为变更注意**：升级后 daily 模式会真正按 `MaxAge`（默认 7 天）/ `MaxBackups`（默认 50）删除旧文件。若此前依赖「daily 文件永久保留」，请显式 `WithMaxAge(0)` + `WithMaxBackups(0)` 关闭清理。
+  - size 模式不受影响（其清理一直由 lumberjack 正常完成）。
+
+---
+
 ## logger v1.7.0 — 2026-05-12
 
 > ⚠ **本次发版跳过 v1.5.x / v1.6.x 整段废弃版本号**，从 v1.4.6 直接升至 v1.7.0。`v1.6.1` / `v1.6.2` 在 go.mod 中以 `retract` 指令标记为废弃，禁止使用。

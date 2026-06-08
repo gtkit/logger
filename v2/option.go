@@ -168,6 +168,66 @@ func WithFlushInterval(d time.Duration) Option {
 	}
 }
 
+// WithSampling 启用日志采样，防止高频日志打爆磁盘 / 拖垮下游。
+//
+// 语义（zap 原生 NewSamplerWithOptions，tick 固定 1 秒）：在每个 1 秒窗口内，
+// 对相同 level+message 的日志，先放行 first 条，之后每 thereafter 条放行一条，其余丢弃。
+//   - first <= 0 时回退为 1（至少放行第一条）。
+//   - thereafter == 0 表示首批之后全部丢弃。
+//
+// 默认不启用（不调用本 option 即不采样，所有日志原样输出）。channel 继承相同采样配置。
+//
+// 注意：采样按 message 文本去重，因此高频日志应使用**稳定的 message + 结构化字段**，
+// 而不是把变量拼进 message（拼进 message 会让每条都不同，采样失效）。
+func WithSampling(first, thereafter int) Option {
+	return func(c *Config) error {
+		if thereafter < 0 {
+			return fmt.Errorf("logger: sampling thereafter must be >= 0, got %d", thereafter)
+		}
+		if first <= 0 {
+			first = 1
+		}
+		c.samplingFirst = first
+		c.samplingThereafter = thereafter
+		return nil
+	}
+}
+
+// WithRedactKeys 对指定字段名做脱敏：凡 Key 命中的结构化字段，其值统一替换为 "[REDACTED]"。
+//
+// 典型用途：屏蔽 password / token / authorization / id_card / phone 等敏感字段，避免落盘合规风险。
+// 匹配区分大小写，按字段 Key 精确匹配。channel 继承相同脱敏规则。
+//
+// 不调用本 option 时零开销（不包装 core）。启用后每条日志会按字段数做一次集合查找，开销与字段数成正比。
+//
+// 仅作用于结构化字段（zap.String("password", x) 这类）；拼进 message 文本的敏感信息不受影响——
+// 这也是推荐用结构化字段而非字符串拼接的又一理由。
+func WithRedactKeys(keys ...string) Option {
+	return func(c *Config) error {
+		if len(keys) == 0 {
+			return nil
+		}
+		set := make(map[string]struct{}, len(keys))
+		for _, k := range keys {
+			if k != "" {
+				set[k] = struct{}{}
+			}
+		}
+		if len(set) == 0 {
+			return nil
+		}
+		c.fieldRedactor = func(fields []zapcore.Field) []zapcore.Field {
+			for i := range fields {
+				if _, ok := set[fields[i].Key]; ok {
+					fields[i] = zapcore.Field{Key: fields[i].Key, Type: zapcore.StringType, String: redactedValue}
+				}
+			}
+			return fields
+		}
+		return nil
+	}
+}
+
 type ChannelOption func(*channelConfig) error
 
 func WithChannel(name string, opts ...ChannelOption) Option {
