@@ -41,40 +41,22 @@ func (m *testMessager) SendTo(url, msg string) {
 	m.lastMsg = msg
 }
 
-func TestDailyWriteSyncerRotatesOnFullDateChange(t *testing.T) {
-	t.Parallel()
+func TestDailyDivisionUsesDatedActiveFilename(t *testing.T) {
+	logpath := filepath.Join(t.TempDir(), "daily")
 
-	cfg := &Config{
-		path:       t.TempDir() + "/daily",
-		level:      "info",
-		maxSize:    1,
-		maxAge:     1,
-		maxBackups: 1,
-	}
+	log := MustNew(
+		WithDivision("daily"),
+		WithPath(logpath),
+		WithConsole(false),
+		WithFile(true),
+	)
+	log.Info("daily division")
+	log.Sync()
 
-	dw, err := newDailyWriteSyncer(cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		_ = dw.Close()
-	})
-	oldWriter := dw.lj
-	dw.currentDate = "2000-01-01"
-
-	if _, err = dw.Write([]byte("hello\n")); err != nil {
-		t.Fatal(err)
-	}
-
-	wantDate := time.Now().Format(time.DateOnly)
-	if dw.currentDate != wantDate {
-		t.Fatalf("currentDate = %q, want %q", dw.currentDate, wantDate)
-	}
-	if dw.lj == oldWriter {
-		t.Fatal("daily writer was not replaced after date change")
-	}
-	if !strings.Contains(dw.lj.Filename, wantDate) {
-		t.Fatalf("filename %q does not contain current date %q", dw.lj.Filename, wantDate)
+	wantFile := logpath + "-info-" + time.Now().Format(time.DateOnly) + ".log"
+	out := readLogFile(t, wantFile)
+	if !strings.Contains(out, "daily division") {
+		t.Fatalf("daily log missing message: %s", out)
 	}
 }
 
@@ -273,12 +255,26 @@ func TestConfiguredChannelReuseDoesNotLeakContext(t *testing.T) {
 func readLogFile(t *testing.T, path string) string {
 	t.Helper()
 
-	data, err := os.ReadFile(path)
+	data, err := readLogFileData(path)
 	if err != nil {
 		t.Fatalf("read log file %q: %v", path, err)
 	}
 
 	return string(data)
+}
+
+func readLogFileData(path string) ([]byte, error) {
+	data, err := os.ReadFile(path)
+	if err == nil || !os.IsNotExist(err) {
+		return data, err
+	}
+
+	ext := filepath.Ext(path)
+	if ext != ".log" {
+		return data, err
+	}
+	datedPath := strings.TrimSuffix(path, ext) + "-" + time.Now().Format(time.DateOnly) + ext
+	return os.ReadFile(datedPath)
 }
 
 // ============================================================
@@ -1539,57 +1535,6 @@ func TestMultiChannelConcurrentWrites(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// dailyWriteSyncer 跨天并发切换竞态测试
-// ---------------------------------------------------------------------------
-
-func TestDailyWriteSyncerConcurrentCrossDayRotation(t *testing.T) {
-	cfg := &Config{
-		path:       filepath.Join(t.TempDir(), "daily"),
-		level:      "info",
-		maxSize:    1,
-		maxAge:     1,
-		maxBackups: 1,
-	}
-
-	dw, err := newDailyWriteSyncer(cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = dw.Close() })
-
-	dw.currentDate = "2000-01-01"
-
-	const goroutines = 32
-	const writesPerG = 50
-
-	var wg sync.WaitGroup
-	wg.Add(goroutines)
-	var totalBytes atomic.Int64
-	for g := range goroutines {
-		go func(gi int) {
-			defer wg.Done()
-			line := []byte(fmt.Sprintf("g%d-write\n", gi))
-			for range writesPerG {
-				n, werr := dw.Write(line)
-				if werr != nil {
-					t.Errorf("concurrent write err: %v", werr)
-					return
-				}
-				totalBytes.Add(int64(n))
-			}
-		}(g)
-	}
-	wg.Wait()
-
-	if dw.currentDate == "2000-01-01" {
-		t.Fatalf("currentDate not rotated, still: %q", dw.currentDate)
-	}
-	if totalBytes.Load() == 0 {
-		t.Fatal("no bytes written despite concurrent goroutines")
-	}
-}
-
-// ---------------------------------------------------------------------------
 // Buffered FlushInterval 自动刷写验证
 // ---------------------------------------------------------------------------
 
@@ -1611,7 +1556,7 @@ func TestBufferedFlushIntervalAutoFlushes(t *testing.T) {
 
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		data, err := os.ReadFile(logpath + "-info.log")
+		data, err := readLogFileData(logpath + "-info.log")
 		if err == nil && strings.Contains(string(data), "Z42") {
 			l.Sync()
 			return
@@ -1620,6 +1565,6 @@ func TestBufferedFlushIntervalAutoFlushes(t *testing.T) {
 	}
 
 	l.Sync()
-	data, _ := os.ReadFile(logpath + "-info.log")
+	data, _ := readLogFileData(logpath + "-info.log")
 	t.Fatalf("auto-flush did not occur within 2s. File content after final Sync:\n%s", string(data))
 }

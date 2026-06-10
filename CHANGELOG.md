@@ -11,6 +11,24 @@
 
 ---
 
+## logger v1.8.0 / v2.2.0 — 2026-06-10
+
+### Changed — 行为变更
+
+- **轮转引擎从 lumberjack 迁移到自研 [`github.com/gtkit/logrotate`](https://github.com/gtkit/logrotate) v1.1.1**（v1 + v2）。删除内部 `dailyWriteSyncer`（daily.go）——日切、按大小轮转、gzip 压缩与过期清理统一由 logrotate 完成（后台清理挂入 writer 的 `Close` 生命周期，无 goroutine 逃逸）。
+  - logrotate v1.1.1 修复了 `Close()` 后跨天重开仍写入旧日期文件的问题；已用本包的精确配置（DailyFilename + LocalTime + Compress）对跨天重开、在线日切、同日重开追加三个场景做过 `-race` 交叉验证。
+- **`WithDivision` 新增 `"both"` 模式**（按天日切 + 单日内按 `MaxSize` 轮转同时生效），并且 ⚠ **默认值从 `"size"` 改为 `"both"`**。
+  - **影响**：不显式调用 `WithDivision` 的用户，活跃日志文件名将从 `{path}-{level}.log` 变为 `{path}-{level}-2006-01-02.log`，filebeat / fluentd 等采集器的路径通配需同步调整。
+  - 需保持旧文件名与旧行为，请显式 `WithDivision("size")`。
+
+### Fixed — 修复
+
+- **`WithSampling` 与 `WithRedactKeys` 同时启用时采样静默失效**（影响 v1.7.1 / v2.1.1，两 option 均在该版本引入）。
+  - **原因**：`redactCore` 包装在 zap sampler 之外，其 `Check` 把自身 AddCore 进 CheckedEntry 而不调用内层 `Check`，绕过了 sampler 的采样判定——采样+脱敏同开时所有日志原样写入，采样保护失效。
+  - **修复**：调整包装顺序为脱敏在内、sampler 在最外层（`With()` 预绑定字段经 `sampler.With` 透传，脱敏语义不变），并补充两者同开的组合回归测试。单独使用任一 option 的行为不受影响。
+
+---
+
 ## logger v1.7.1 / v2.1.1 — 2026-06-08
 
 ### Added — 新增公开 API（向后兼容）

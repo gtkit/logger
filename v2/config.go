@@ -17,6 +17,15 @@ const (
 	defaultMaxSize    = 512 // MB
 	defaultMaxAge     = 7   // days
 	defaultMaxBackups = 50
+	noSizeRotationMB  = 1 << 30
+)
+
+type rotationDivision string
+
+const (
+	rotationSize  rotationDivision = "size"
+	rotationDaily rotationDivision = "daily"
+	rotationBoth  rotationDivision = "both"
 )
 
 var levelMap = map[string]zapcore.Level{
@@ -50,7 +59,7 @@ type Config struct {
 	fileStdout         bool
 	outJSON            bool
 	durationEncoder    zapcore.DurationEncoder
-	division           string
+	division           rotationDivision
 	path               string
 	compress           bool
 	maxAge             int
@@ -80,7 +89,7 @@ func defaultConfig() *Config {
 		fileStdout:        true,
 		outJSON:           false,
 		durationEncoder:   zapcore.SecondsDurationEncoder,
-		division:          "size",
+		division:          rotationBoth,
 		path:              defaultPath,
 		compress:          true,
 		maxAge:            defaultMaxAge,

@@ -27,11 +27,13 @@ func WithFile(b bool) Option {
 
 func WithDivision(d string) Option {
 	return func(c *Config) error {
-		if d != "size" && d != "daily" {
-			return fmt.Errorf("logger: invalid division %q, must be \"size\" or \"daily\"", d)
+		switch rotationDivision(d) {
+		case rotationSize, rotationDaily, rotationBoth:
+			c.division = rotationDivision(d)
+			return nil
+		default:
+			return fmt.Errorf("logger: invalid division %q, must be \"size\", \"daily\", or \"both\"", d)
 		}
-		c.division = d
-		return nil
 	}
 }
 

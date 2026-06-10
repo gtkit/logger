@@ -7,8 +7,10 @@ const redactedValue = "[REDACTED]"
 
 // redactCore 包装一个 zapcore.Core，在写入前对字段执行脱敏函数。
 //
-// 包在最外层（采样/leveled core 之外），确保通过 Logger.With() 预绑定的字段
-// 同样经过脱敏——zap 在 With 时把字段下推到 core.With，这里一并处理。
+// 包装顺序（见 buildCore）：leveled core 之外、sampler 之内。Logger.With() 预绑定的
+// 字段经 sampler.With 原样透传到这里的 With，同样过脱敏；而 sampler 必须留在最外层——
+// 本装饰器的 Check 把自身 AddCore 进 CheckedEntry、不会调用内层 Check，若把 sampler
+// 包在内层，其 Check 里的采样判定将被绕过（曾因此导致采样+脱敏同开时采样静默失效）。
 type redactCore struct {
 	zapcore.Core
 	redact func([]zapcore.Field) []zapcore.Field

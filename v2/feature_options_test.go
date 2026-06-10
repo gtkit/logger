@@ -64,6 +64,36 @@ func TestSamplingDropsRepeats(t *testing.T) {
 	}
 }
 
+// TestSamplingWithRedactKeys 回归测试：采样与脱敏同时启用时，两者都必须生效。
+// 历史 bug：redactCore 曾包在 sampler 之外，其 Check 绕过 sampler.Check，导致采样静默失效。
+func TestSamplingWithRedactKeys(t *testing.T) {
+	logpath := filepath.Join(t.TempDir(), "app")
+
+	l, err := New(
+		WithPath(logpath),
+		WithFile(true),
+		WithConsole(false),
+		WithOutJSON(true),
+		WithSampling(2, 0),
+		WithRedactKeys("password"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 8 {
+		l.Info("hot-message", zap.String("password", "supersecret"))
+	}
+	l.Sync()
+
+	out := readLogFile(t, logpath+"-info.log")
+	if got := strings.Count(out, "hot-message"); got != 2 {
+		t.Fatalf("采样+脱敏同开时采样失效: 期望 2 条，实际 %d 条:\n%s", got, out)
+	}
+	if strings.Contains(out, "supersecret") || !strings.Contains(out, "[REDACTED]") {
+		t.Fatalf("采样+脱敏同开时脱敏失效:\n%s", out)
+	}
+}
+
 func TestSamplingDisabledByDefault(t *testing.T) {
 	logpath := filepath.Join(t.TempDir(), "app")
 

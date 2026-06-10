@@ -13,9 +13,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/gtkit/logrotate"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
-	"gopkg.in/natefinch/lumberjack.v2"
 )
 
 // ContextFieldsFunc 从 context.Context 中提取需要注入日志的字段。
@@ -27,6 +27,15 @@ const (
 	defaultMaxSize    = 512 // MB
 	defaultMaxAge     = 7   // days
 	defaultMaxBackups = 50
+	noSizeRotationMB  = 1 << 30
+)
+
+type rotationDivision string
+
+const (
+	rotationSize  rotationDivision = "size"
+	rotationDaily rotationDivision = "daily"
+	rotationBoth  rotationDivision = "both"
 )
 
 var (
@@ -58,7 +67,7 @@ type logConfig struct {
 	fileStdout         bool
 	outJSON            bool
 	durationEncoder    zapcore.DurationEncoder
-	division           string
+	division           rotationDivision
 	path               string
 	compress           bool
 	maxAge             int
@@ -90,7 +99,7 @@ func New(opts ...Option) error {
 		fileStdout:        true,
 		outJSON:           false,
 		durationEncoder:   zapcore.SecondsDurationEncoder,
-		division:          "size",
+		division:          rotationBoth,
 		path:              defaultPath,
 		compress:          true,
 		maxAge:            defaultMaxAge,
@@ -157,39 +166,31 @@ func Undo() {
 }
 
 func buildFileWriter(cfg *logConfig) (zapcore.WriteSyncer, []io.Closer, error) {
-	switch cfg.division {
-	case "daily":
-		return buildDailyWriter(cfg)
-	default:
-		return buildSizeWriter(cfg)
-	}
-}
-
-func buildSizeWriter(cfg *logConfig) (zapcore.WriteSyncer, []io.Closer, error) {
-	logpath := cfg.path + "-" + cfg.level + ".log"
-	if err := ensureLogDir(logpath); err != nil {
-		return nil, nil, err
-	}
-
-	lj := &lumberjack.Logger{
-		Filename:   logpath,
-		MaxSize:    cfg.maxSize,
+	lr := &logrotate.Logger{
+		Filename:   logFilename(cfg),
+		MaxSize:    logrotateMaxSize(cfg),
 		MaxAge:     cfg.maxAge,
 		MaxBackups: cfg.maxBackups,
 		Compress:   cfg.compress,
 		LocalTime:  true,
 	}
 
-	return wrapWriter(cfg, zapcore.AddSync(lj), lj)
-}
-
-func buildDailyWriter(cfg *logConfig) (zapcore.WriteSyncer, []io.Closer, error) {
-	dw, err := newDailyWriteSyncer(cfg)
-	if err != nil {
-		return nil, nil, err
+	if cfg.division == rotationDaily || cfg.division == rotationBoth {
+		lr.DailyFilename = true
 	}
 
-	return wrapWriter(cfg, zapcore.AddSync(dw), dw)
+	return wrapWriter(cfg, zapcore.AddSync(lr), lr)
+}
+
+func logFilename(cfg *logConfig) string {
+	return cfg.path + "-" + cfg.level + ".log"
+}
+
+func logrotateMaxSize(cfg *logConfig) int {
+	if cfg.division == rotationDaily {
+		return noSizeRotationMB
+	}
+	return cfg.maxSize
 }
 
 const (
@@ -337,15 +338,20 @@ func buildCore(cfg *logConfig, lvl zap.AtomicLevel) (zapcore.Core, []io.Closer, 
 		lvl,
 	)
 
-	// 采样：同一 tick 内（1s）相同 level+message 先放行 first 条，之后每 thereafter 条放行一条。
-	// 防止热循环里的高频日志打爆磁盘 / 拖垮下游。两值均为 0 时不包装（默认关闭）。
-	if cfg.samplingFirst > 0 || cfg.samplingThereafter > 0 {
-		core = zapcore.NewSamplerWithOptions(core, time.Second, cfg.samplingFirst, cfg.samplingThereafter)
-	}
-
-	// 字段脱敏：包在最外层，确保 With() 追加的字段同样过脱敏。nil 时不包装（零开销）。
+	// 字段脱敏：包在采样之内，With() 预绑定字段经 sampler.With 透传后同样过脱敏。
+	// nil 时不包装（零开销）。
 	if cfg.fieldRedactor != nil {
 		core = newRedactCore(core, cfg.fieldRedactor)
+	}
+
+	// 采样：同一 tick 内（1s）相同 level+message 先放行 first 条，之后每 thereafter 条放行一条。
+	// 防止热循环里的高频日志打爆磁盘 / 拖垮下游。两值均为 0 时不包装（默认关闭）。
+	//
+	// sampler 必须包在最外层：zap 的采样判定全部在 sampler.Check 里完成，而装饰器型 core
+	// （如 redactCore）的 Check 会把自身 AddCore 进 CheckedEntry、不再调用内层 Check——
+	// 若 sampler 被包在内层，其 Check 永远不会执行，采样将静默失效。
+	if cfg.samplingFirst > 0 || cfg.samplingThereafter > 0 {
+		core = zapcore.NewSamplerWithOptions(core, time.Second, cfg.samplingFirst, cfg.samplingThereafter)
 	}
 
 	return core, closers, nil
@@ -410,18 +416,6 @@ func retireLoggerState(state *loggerState) {
 	state.closeResources()
 }
 
-func ensureLogDir(logpath string) error {
-	dir := filepath.Dir(logpath)
-	if dir == "." || dir == "" {
-		return nil
-	}
-
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return fmt.Errorf("logger: create log dir %q: %w", dir, err)
-	}
-	return nil
-}
-
 func closeClosers(closers []io.Closer) {
 	for _, c := range closers {
 		if err := c.Close(); err != nil {
@@ -435,7 +429,7 @@ func closeClosers(closers []io.Closer) {
 // 冲突规则：
 //   - 任一 channel 与 root 同路径 → 错误（duplicate=true 时双写同一文件；duplicate=false 时
 //     两个独立 writer 竞争同一文件——两种情况都会引起 rotate/写入竞态）
-//   - 两个 channel 同路径 → 错误（不论是否 duplicate，都会引起 lumberjack 实例间竞态）
+//   - 两个 channel 同路径 → 错误（不论是否 duplicate，都会引起 rotator 实例间竞态）
 //
 // 命名按字典序遍历，确保错误信息确定性（便于测试与排错）。
 func validateChannelRoutes(root *logConfig) error {

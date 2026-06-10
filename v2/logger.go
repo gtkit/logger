@@ -12,9 +12,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/gtkit/logrotate"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
-	"gopkg.in/natefinch/lumberjack.v2"
 )
 
 type channelRoute struct {
@@ -150,34 +150,31 @@ func build(cfg *Config) (*Logger, error) {
 }
 
 func buildFileWriter(cfg *Config) (zapcore.WriteSyncer, []io.Closer, error) {
-	switch cfg.division {
-	case "daily":
-		dw, err := newDailyWriteSyncer(cfg)
-		if err != nil {
-			return nil, nil, err
-		}
-		return wrapWriter(cfg, zapcore.AddSync(dw), dw)
-	default:
-		return buildSizeWriter(cfg)
-	}
-}
-
-func buildSizeWriter(cfg *Config) (zapcore.WriteSyncer, []io.Closer, error) {
-	logpath := cfg.path + "-" + cfg.level + ".log"
-	if err := ensureLogDir(logpath); err != nil {
-		return nil, nil, err
-	}
-
-	lj := &lumberjack.Logger{
-		Filename:   logpath,
-		MaxSize:    cfg.maxSize,
+	lr := &logrotate.Logger{
+		Filename:   logFilename(cfg),
+		MaxSize:    logrotateMaxSize(cfg),
 		MaxAge:     cfg.maxAge,
 		MaxBackups: cfg.maxBackups,
 		Compress:   cfg.compress,
 		LocalTime:  true,
 	}
 
-	return wrapWriter(cfg, zapcore.AddSync(lj), lj)
+	if cfg.division == rotationDaily || cfg.division == rotationBoth {
+		lr.DailyFilename = true
+	}
+
+	return wrapWriter(cfg, zapcore.AddSync(lr), lr)
+}
+
+func logFilename(cfg *Config) string {
+	return cfg.path + "-" + cfg.level + ".log"
+}
+
+func logrotateMaxSize(cfg *Config) int {
+	if cfg.division == rotationDaily {
+		return noSizeRotationMB
+	}
+	return cfg.maxSize
 }
 
 const (
@@ -333,15 +330,20 @@ func buildCore(cfg *Config, lvl zap.AtomicLevel) (zapcore.Core, []io.Closer, err
 		lvl,
 	)
 
-	// 采样：同一 tick 内（1s）相同 level+message 先放行 first 条，之后每 thereafter 条放行一条。
-	// 防止热循环里的高频日志打爆磁盘 / 拖垮下游。两值均为 0 时不包装（默认关闭）。
-	if cfg.samplingFirst > 0 || cfg.samplingThereafter > 0 {
-		core = zapcore.NewSamplerWithOptions(core, time.Second, cfg.samplingFirst, cfg.samplingThereafter)
-	}
-
-	// 字段脱敏：包在最外层，确保 With() 追加的字段同样过脱敏。nil 时不包装（零开销）。
+	// 字段脱敏：包在采样之内，With() 预绑定字段经 sampler.With 透传后同样过脱敏。
+	// nil 时不包装（零开销）。
 	if cfg.fieldRedactor != nil {
 		core = newRedactCore(core, cfg.fieldRedactor)
+	}
+
+	// 采样：同一 tick 内（1s）相同 level+message 先放行 first 条，之后每 thereafter 条放行一条。
+	// 防止热循环里的高频日志打爆磁盘 / 拖垮下游。两值均为 0 时不包装（默认关闭）。
+	//
+	// sampler 必须包在最外层：zap 的采样判定全部在 sampler.Check 里完成，而装饰器型 core
+	// （如 redactCore）的 Check 会把自身 AddCore 进 CheckedEntry、不再调用内层 Check——
+	// 若 sampler 被包在内层，其 Check 永远不会执行，采样将静默失效。
+	if cfg.samplingFirst > 0 || cfg.samplingThereafter > 0 {
+		core = zapcore.NewSamplerWithOptions(core, time.Second, cfg.samplingFirst, cfg.samplingThereafter)
 	}
 
 	return core, closers, nil
@@ -366,18 +368,6 @@ func newZapLogger(core zapcore.Core) *zap.Logger {
 	)
 }
 
-func ensureLogDir(logpath string) error {
-	dir := filepath.Dir(logpath)
-	if dir == "." || dir == "" {
-		return nil
-	}
-
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return fmt.Errorf("logger: create log dir %q: %w", dir, err)
-	}
-	return nil
-}
-
 func closeClosers(closers []io.Closer) {
 	for _, c := range closers {
 		if err := c.Close(); err != nil {
@@ -390,7 +380,7 @@ func closeClosers(closers []io.Closer) {
 //
 // 冲突规则：
 //   - channel 与 root 同路径 → 错误（无论 duplicate-to-default 与否，都会引起竞态）
-//   - 两个 channel 同路径 → 错误（lumberjack 实例间会竞争 rotate）
+//   - 两个 channel 同路径 → 错误（rotator 实例间会竞争 rotate）
 //
 // 命名按字典序遍历，确保错误信息确定性。
 func validateChannelRoutes(root *Config) error {
