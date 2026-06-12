@@ -73,8 +73,8 @@ func WithCompress(b bool) Option {
 
 func WithMaxAge(days int) Option {
 	return func(c *Config) error {
-		if days <= 0 {
-			return fmt.Errorf("logger: maxAge must be > 0, got %d", days)
+		if days < 0 {
+			return fmt.Errorf("logger: maxAge must be >= 0, got %d", days)
 		}
 		c.maxAge = days
 		return nil

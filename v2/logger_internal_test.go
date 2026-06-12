@@ -732,6 +732,19 @@ func TestWithCompress(t *testing.T) {
 	}
 }
 
+func TestWithMaxAgeAllowsZero(t *testing.T) {
+	cfg := defaultConfig()
+	if err := WithMaxAge(0)(cfg); err != nil {
+		t.Fatalf("WithMaxAge(0): %v", err)
+	}
+	if cfg.maxAge != 0 {
+		t.Fatalf("maxAge = %d", cfg.maxAge)
+	}
+	if err := WithMaxAge(-1)(cfg); err == nil {
+		t.Fatal("expected error for negative maxAge")
+	}
+}
+
 func TestWithMessager(t *testing.T) {
 	cfg := defaultConfig()
 	m := &testMessager{}

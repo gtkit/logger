@@ -11,6 +11,18 @@
 
 ---
 
+## logger v1.8.1 / v2.2.1 — 2026-06-12
+
+### Changed
+
+- **依赖升级**：`github.com/gtkit/logrotate v1.1.1 → v1.1.2`（v1 + v2）。本次 logrotate 升级保持结构体字面量配置兼容；现有 `&logrotate.Logger{...}` 接入不需要迁移到新 `logrotate.New(...)` API。
+
+### Fixed
+
+- **`WithMaxAge(0)` 现在合法**（v1 + v2），与 README 和底层 logrotate 语义对齐：`0` 表示不按时间删除历史日志，负数才返回配置错误。此前用户无法通过公开 Option 配出文档中的 `WithMaxAge(0) + WithMaxBackups(0)` 关闭清理组合。
+
+---
+
 ## logger v1.8.0 / v2.2.0 — 2026-06-10
 
 ### Changed — 行为变更
