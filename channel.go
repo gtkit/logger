@@ -267,7 +267,7 @@ func (l *ChannelLogger) HInfo(msg string, fields ...zap.Field) {
 	defer state.release()
 	l.derive(state).Info(msg, fields...)
 	if state.messager != nil {
-		state.messager.Send(formatFieldsMsg(msg, withChannelField(l.channel, fields)))
+		state.messager.Send(formatHookFieldsMsg(msg, withChannelField(l.channel, fields), state.fieldRedactor))
 	}
 }
 
@@ -291,7 +291,7 @@ func (l *ChannelLogger) HInfoTo(url, msg string, fields ...zap.Field) {
 	defer state.release()
 	l.derive(state).Info(msg, fields...)
 	if state.messager != nil {
-		state.messager.SendTo(url, formatFieldsMsg(msg, withChannelField(l.channel, fields)))
+		state.messager.SendTo(url, formatHookFieldsMsg(msg, withChannelField(l.channel, fields), state.fieldRedactor))
 	}
 }
 
@@ -315,7 +315,7 @@ func (l *ChannelLogger) HError(msg string, fields ...zap.Field) {
 	defer state.release()
 	l.derive(state).Error(msg, fields...)
 	if state.messager != nil {
-		state.messager.Send(formatFieldsMsg(msg, withChannelField(l.channel, fields)))
+		state.messager.Send(formatHookFieldsMsg(msg, withChannelField(l.channel, fields), state.fieldRedactor))
 	}
 }
 
@@ -339,7 +339,7 @@ func (l *ChannelLogger) HErrorTo(url, msg string, fields ...zap.Field) {
 	defer state.release()
 	l.derive(state).Error(msg, fields...)
 	if state.messager != nil {
-		state.messager.SendTo(url, formatFieldsMsg(msg, withChannelField(l.channel, fields)))
+		state.messager.SendTo(url, formatHookFieldsMsg(msg, withChannelField(l.channel, fields), state.fieldRedactor))
 	}
 }
 

@@ -16,29 +16,31 @@ import (
 //
 //	slog.SetDefault(slog.New(logger.SlogHandler()))
 func SlogHandler() slog.Handler {
-	return &zapSlogHandler{getCore: currentCore, addSource: true}
-}
-
-func currentCore() zapcore.Core {
-	if state := snapshotLoggerState(); state != nil {
-		return state.root.Core()
-	}
-	return zapcore.NewNopCore()
+	return &zapSlogHandler{getState: currentLoggerState, addSource: true}
 }
 
 type zapSlogHandler struct {
-	getCore   func() zapcore.Core
+	getState  func() *loggerState
 	addSource bool
 	attrs     []zap.Field
 	group     string
 }
 
 func (h *zapSlogHandler) Enabled(_ context.Context, level slog.Level) bool {
-	return h.getCore().Enabled(slogToZapLevel(level))
+	if state := snapshotLoggerState(); state != nil {
+		return state.root.Core().Enabled(slogToZapLevel(level))
+	}
+	return false
 }
 
 func (h *zapSlogHandler) Handle(_ context.Context, record slog.Record) error {
-	core := h.getCore()
+	state := h.getState()
+	if state == nil {
+		return nil
+	}
+	defer state.release()
+
+	core := state.root.Core()
 	fields := make([]zap.Field, 0, len(h.attrs)+record.NumAttrs()+1)
 	fields = append(fields, h.attrs...)
 
@@ -72,7 +74,7 @@ func (h *zapSlogHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
 	}
 
 	return &zapSlogHandler{
-		getCore:   h.getCore,
+		getState:  h.getState,
 		addSource: h.addSource,
 		attrs:     append(slices.Clone(h.attrs), fields...),
 		group:     h.group,
@@ -86,7 +88,7 @@ func (h *zapSlogHandler) WithGroup(name string) slog.Handler {
 	}
 
 	return &zapSlogHandler{
-		getCore:   h.getCore,
+		getState:  h.getState,
 		addSource: h.addSource,
 		attrs:     slices.Clone(h.attrs),
 		group:     newGroup,

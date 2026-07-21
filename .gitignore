@@ -1,3 +1,6 @@
 .idea/
 .Ds_Store
 testlogs
+.vscode/
+.DS_Store
+*.log

@@ -297,7 +297,7 @@ linters:
           msg: "禁止用 fmt.Print* 打日志，请用 github.com/gtkit/logger"
 ```
 
-> 机械强制优于口头约定——把规则交给 lint，新人和 AI 都绕不过去。
+> 机械强制优于口头约定——把规则交给 lint，任何人都绕不过去。
 
 ## 第三方库适配器
 

@@ -30,6 +30,7 @@ type lifecycleState struct {
 	closers                []io.Closer
 	asyncMsg               *asyncMessager
 	atomicLevel            zap.AtomicLevel
+	fieldRedactor          func([]zapcore.Field) []zapcore.Field
 	channelRoutes          map[string]*channelRoute
 	rootChannels           map[string]*Logger
 	dynamicChannelBases    sync.Map
@@ -62,7 +63,8 @@ func (s *lifecycleState) Sync() {
 			s.asyncMsg.close()
 		}
 		if s.root != nil {
-			if err := s.root.Sync(); err != nil {
+			// console(终端/管道)的 fsync 失败是平台噪音,静默;文件输出的真实失败照常告警。
+			if err := s.root.Sync(); err != nil && !isBenignSyncError(err) {
 				fmt.Fprintf(os.Stderr, "logger: sync root logger: %v\n", err)
 			}
 		}
@@ -122,6 +124,7 @@ func build(cfg *Config) (*Logger, error) {
 		closers:       built.closers,
 		asyncMsg:      asyncMsg,
 		atomicLevel:   built.atomicLevel,
+		fieldRedactor: cfg.fieldRedactor,
 		channelRoutes: built.channelRoutes,
 		rootChannels:  make(map[string]*Logger, len(built.channelRoutes)),
 	}

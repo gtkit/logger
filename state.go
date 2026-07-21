@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 // maxDynamicChannels 动态 channel 缓存上限，防止无限增长导致内存泄漏。
@@ -21,6 +22,7 @@ type loggerState struct {
 	asyncMsg          *asyncMessager
 	contextFields     ContextFieldsFunc
 	atomicLevel       zap.AtomicLevel
+	fieldRedactor     func([]zapcore.Field) []zapcore.Field
 	channelBases      map[string]*zap.Logger
 	dynamicChannel    sync.Map
 	dynamicChannelCnt atomic.Int64
@@ -170,7 +172,8 @@ func (s *loggerState) closeResources() {
 	if s.asyncMsg != nil {
 		s.asyncMsg.close()
 	}
-	if err := s.root.Sync(); err != nil {
+	// console(终端/管道)的 fsync 失败是平台噪音,静默;文件输出的真实失败照常告警。
+	if err := s.root.Sync(); err != nil && !isBenignSyncError(err) {
 		fmt.Fprintf(os.Stderr, "logger: sync root logger: %v\n", err)
 	}
 	closeClosers(s.closers)

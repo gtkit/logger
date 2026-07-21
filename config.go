@@ -306,7 +306,10 @@ func buildLoggerState(cfg *logConfig) (*loggerState, error) {
 		msgr = asyncMsg
 	}
 
-	return newLoggerState(root, channelBases, allClosers, msgr, asyncMsg, cfg.contextFields, atomicLevel), nil
+	state := newLoggerState(root, channelBases, allClosers, msgr, asyncMsg, cfg.contextFields, atomicLevel)
+	state.fieldRedactor = cfg.fieldRedactor
+
+	return state, nil
 }
 
 func buildCore(cfg *logConfig, lvl zap.AtomicLevel) (zapcore.Core, []io.Closer, error) {

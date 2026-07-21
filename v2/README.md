@@ -141,6 +141,7 @@ logger.WithChannel("audit",
 | `WithMaxBackups(n)` | 最大备份数量 | `50` |
 | `WithCompress(b)` | 是否压缩归档 | `true` |
 | `WithMessager(m)` | 外部消息推送 Hook | `nil` |
+| `WithMessagerQueueSize(n)` | 异步推送队列大小 | `1024` |
 | `WithBuffered(b)` | 是否启用缓冲写入（BufferedWriteSyncer） | `false` |
 | `WithBufferSize(n)` | 缓冲区大小（字节），仅 `WithBuffered(true)` 时生效 | `256KB` |
 | `WithFlushInterval(d)` | 缓冲区自动刷写间隔，仅 `WithBuffered(true)` 时生效 | `30s` |
@@ -248,7 +249,7 @@ linters:
           msg: "禁止用 fmt.Print* 打日志，请用 github.com/gtkit/logger/v2"
 ```
 
-> 机械强制优于口头约定——把规则交给 lint，新人和 AI 都绕不过去。
+> 机械强制优于口头约定——把规则交给 lint，任何人都绕不过去。
 
 ## 第三方库适配器
 
@@ -281,6 +282,17 @@ log := logger.MustNew(
 
 log.HError("payment failed", zap.String("order_id", "12345"))
 ```
+
+消息推送默认异步执行（队列大小 1024），不会阻塞日志写入。可通过 `WithMessagerQueueSize` 调整队列大小：
+
+```go
+log := logger.MustNew(
+	logger.WithMessager(myFeishuMessager),
+	logger.WithMessagerQueueSize(4096),
+)
+```
+
+队列满时推送静默丢弃（日志已写入文件，只丢通知），保证日志调用永不阻塞。
 
 ### H 系列方法一览
 
@@ -320,11 +332,18 @@ slog.Info("request",
 )
 ```
 
+## 丢弃消息监控
+
+当异步 Messager 队列满时，推送会被静默丢弃。可通过 `DroppedMessages()` 监控丢弃量：
+
+```go
+dropped := log.DroppedMessages()
+if dropped > 0 {
+	metrics.Gauge("logger.messager.dropped", dropped)
+}
+```
+
 ## API 方法一览
-
-## License
-
-Apache-2.0. See [../LICENSE](../LICENSE).
 
 ### Structured（高性能，类型安全）
 
@@ -529,3 +548,7 @@ defer log.Sync() // 重要：确保退出时 flush 缓冲区
 ```bash
 go test -run ^$ -bench "Benchmark(Info|Channel)" -benchmem
 ```
+
+## License
+
+Apache-2.0. See [../LICENSE](../LICENSE).

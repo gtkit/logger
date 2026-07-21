@@ -40,6 +40,37 @@ func TestRedactKeysMasksValues(t *testing.T) {
 	}
 }
 
+func TestRedactKeysDoesNotMutateCallerFields(t *testing.T) {
+	logpath := filepath.Join(t.TempDir(), "app")
+	fields := []zap.Field{
+		zap.String("user", "bob"),
+		zap.String("password", "supersecret"),
+	}
+
+	l, err := New(
+		WithPath(logpath),
+		WithFile(true),
+		WithConsole(false),
+		WithOutJSON(true),
+		WithRedactKeys("password"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	l.Info("login", fields...)
+	l.Sync()
+
+	if fields[1].String != "supersecret" {
+		t.Fatalf("调用方字段被脱敏逻辑修改: got %q", fields[1].String)
+	}
+
+	out := readLogFile(t, logpath+"-info.log")
+	if strings.Contains(out, "supersecret") || !strings.Contains(out, "[REDACTED]") {
+		t.Fatalf("日志内容脱敏结果不正确: %s", out)
+	}
+}
+
 func TestSamplingDropsRepeats(t *testing.T) {
 	logpath := filepath.Join(t.TempDir(), "app")
 

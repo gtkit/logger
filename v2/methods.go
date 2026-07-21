@@ -254,7 +254,7 @@ func (l *Logger) WarnIfCtx(ctx context.Context, err error) {
 func (l *Logger) HInfo(msg string, fields ...zap.Field) {
 	l.zap.Info(msg, fields...)
 	if l.messager != nil {
-		l.messager.Send(formatFieldsMsg(msg, withChannelField(l.channel, fields)))
+		l.messager.Send(l.formatHookFieldsMsg(msg, withChannelField(l.channel, fields)))
 	}
 }
 
@@ -268,7 +268,7 @@ func (l *Logger) HInfof(format string, args ...any) {
 func (l *Logger) HInfoTo(url, msg string, fields ...zap.Field) {
 	l.zap.Info(msg, fields...)
 	if l.messager != nil {
-		l.messager.SendTo(url, formatFieldsMsg(msg, withChannelField(l.channel, fields)))
+		l.messager.SendTo(url, l.formatHookFieldsMsg(msg, withChannelField(l.channel, fields)))
 	}
 }
 
@@ -282,7 +282,7 @@ func (l *Logger) HInfoTof(url, format string, args ...any) {
 func (l *Logger) HError(msg string, fields ...zap.Field) {
 	l.zap.Error(msg, fields...)
 	if l.messager != nil {
-		l.messager.Send(formatFieldsMsg(msg, withChannelField(l.channel, fields)))
+		l.messager.Send(l.formatHookFieldsMsg(msg, withChannelField(l.channel, fields)))
 	}
 }
 
@@ -296,7 +296,7 @@ func (l *Logger) HErrorf(format string, args ...any) {
 func (l *Logger) HErrorTo(url, msg string, fields ...zap.Field) {
 	l.zap.Error(msg, fields...)
 	if l.messager != nil {
-		l.messager.SendTo(url, formatFieldsMsg(msg, withChannelField(l.channel, fields)))
+		l.messager.SendTo(url, l.formatHookFieldsMsg(msg, withChannelField(l.channel, fields)))
 	}
 }
 
@@ -305,6 +305,13 @@ func (l *Logger) HErrorTof(url, format string, args ...any) {
 	if l.messager != nil {
 		l.messager.SendTo(url, formatChannelMsg(l.channel, formatMsg(format, args)))
 	}
+}
+
+func (l *Logger) formatHookFieldsMsg(msg string, fields []zap.Field) string {
+	if l.state == nil {
+		return formatHookFieldsMsg(msg, fields, nil)
+	}
+	return formatHookFieldsMsg(msg, fields, l.state.fieldRedactor)
 }
 
 func (l *Logger) rootLogger() *zap.Logger {

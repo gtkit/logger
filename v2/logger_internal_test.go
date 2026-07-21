@@ -108,6 +108,28 @@ func TestHInfoIncludesFieldsInMessager(t *testing.T) {
 	}
 }
 
+func TestHInfoMessagerRedactsFields(t *testing.T) {
+	msg := newSyncTestMessager(1)
+	log := MustNew(
+		WithConsole(false),
+		WithFile(false),
+		WithMessager(msg),
+		WithRedactKeys("password"),
+	)
+	defer log.Sync()
+
+	log.HInfo("login", zap.String("password", "supersecret"))
+
+	select {
+	case got := <-msg.msgs:
+		if strings.Contains(got, "supersecret") || !strings.Contains(got, redactedValue) {
+			t.Fatalf("hook message redaction failed: %s", got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for hook message")
+	}
+}
+
 func TestChannelUnconfiguredWritesOnlyDefaultFile(t *testing.T) {
 	tempDir := t.TempDir()
 	defaultPath := filepath.Join(tempDir, "default", "app")
@@ -335,6 +357,24 @@ func (m *syncTestMessager) SendTo(url, msg string) {
 	m.toMsgs <- [2]string{url, msg}
 }
 
+type panicMessager struct {
+	inner *syncTestMessager
+}
+
+func (m *panicMessager) Send(msg string) {
+	if msg == "panic" {
+		panic("boom")
+	}
+	m.inner.Send(msg)
+}
+
+func (m *panicMessager) SendTo(url, msg string) {
+	if msg == "panic" {
+		panic("boom")
+	}
+	m.inner.SendTo(url, msg)
+}
+
 func TestAsyncMessager_SendDelivered(t *testing.T) {
 	inner := newSyncTestMessager(10)
 	am := newAsyncMessager(inner, 10)
@@ -433,6 +473,82 @@ func TestAsyncMessager_CloseDrainsQueue(t *testing.T) {
 	count := len(inner.msgs)
 	if count != 3 {
 		t.Fatalf("expected 3 messages drained, got %d", count)
+	}
+}
+
+func TestAsyncMessager_SendAfterCloseIsIgnored(_ *testing.T) {
+	inner := newSyncTestMessager(10)
+	am := newAsyncMessager(inner, 10)
+
+	am.close()
+	am.Send("after-close")
+	am.SendTo("http://example.com", "after-close")
+	am.close()
+}
+
+func TestAsyncMessager_CloseWhileSendingDoesNotPanic(_ *testing.T) {
+	inner := newSyncTestMessager(1024)
+	am := newAsyncMessager(inner, 128)
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+
+	for range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			for range 256 {
+				am.Send("message")
+			}
+		}()
+	}
+
+	close(start)
+	am.close()
+	wg.Wait()
+	am.Send("after-close")
+}
+
+func TestLoggerHookMethodsAfterSyncDoNotPanic(_ *testing.T) {
+	l := MustNew(
+		WithConsole(false),
+		WithFile(false),
+		WithMessager(newSyncTestMessager(10)),
+	)
+
+	l.Sync()
+	l.HInfo("after-sync")
+	l.HInfoTo("http://example.com", "after-sync")
+	l.HError("after-sync")
+	l.HErrorTo("http://example.com", "after-sync")
+}
+
+func TestAsyncMessager_RecoversPanics(t *testing.T) {
+	inner := newSyncTestMessager(10)
+	am := newAsyncMessager(&panicMessager{inner: inner}, 10)
+
+	am.Send("panic")
+	am.Send("after-panic")
+	am.SendTo("http://example.com", "panic")
+	am.SendTo("http://example.com", "after-panic-to")
+	am.close()
+
+	select {
+	case msg := <-inner.msgs:
+		if msg != "after-panic" {
+			t.Fatalf("got %q, want %q", msg, "after-panic")
+		}
+	default:
+		t.Fatal("message after panic was not delivered")
+	}
+
+	select {
+	case msg := <-inner.toMsgs:
+		if msg[0] != "http://example.com" || msg[1] != "after-panic-to" {
+			t.Fatalf("got %v, want [http://example.com after-panic-to]", msg)
+		}
+	default:
+		t.Fatal("SendTo after panic was not delivered")
 	}
 }
 

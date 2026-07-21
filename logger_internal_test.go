@@ -74,6 +74,29 @@ func TestHInfoIncludesFieldsInMessager(t *testing.T) {
 	}
 }
 
+func TestHInfoMessagerRedactsFields(t *testing.T) {
+	msg := newChanMessager(1)
+
+	NewZap(
+		WithConsole(false),
+		WithFile(false),
+		WithMessager(msg),
+		WithRedactKeys("password"),
+	)
+	defer Sync()
+
+	HInfo("login", zap.String("password", "supersecret"))
+
+	select {
+	case got := <-msg.msgs:
+		if strings.Contains(got, "supersecret") || !strings.Contains(got, redactedValue) {
+			t.Fatalf("hook message redaction failed: %s", got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for hook message")
+	}
+}
+
 func TestGlobalLoggerConcurrentReconfigure(_ *testing.T) {
 	NewZap(WithConsole(false), WithFile(false))
 	defer Sync()
@@ -370,6 +393,24 @@ func (m *chanMessager) SendTo(url, msg string) {
 	m.msgs <- msg
 }
 
+type panicMessager struct {
+	inner *chanMessager
+}
+
+func (m *panicMessager) Send(msg string) {
+	if msg == "panic" {
+		panic("boom")
+	}
+	m.inner.Send(msg)
+}
+
+func (m *panicMessager) SendTo(url, msg string) {
+	if msg == "panic" {
+		panic("boom")
+	}
+	m.inner.SendTo(url, msg)
+}
+
 // ---------------------------------------------------------------------------
 // 1. formatMsg tests
 // ---------------------------------------------------------------------------
@@ -451,6 +492,68 @@ func TestAsyncMessagerCloseDrainsQueue(t *testing.T) {
 	// After close, all 10 messages should have been delivered.
 	if len(inner.msgs) != 10 {
 		t.Fatalf("expected 10 msgs, got %d", len(inner.msgs))
+	}
+}
+
+func TestAsyncMessagerSendAfterCloseIsIgnored(_ *testing.T) {
+	inner := newChanMessager(10)
+	am := newAsyncMessager(inner, 10)
+
+	am.close()
+	am.Send("after-close")
+	am.SendTo("http://example.com", "after-close")
+	am.close()
+}
+
+func TestAsyncMessagerCloseWhileSendingDoesNotPanic(_ *testing.T) {
+	inner := newChanMessager(1024)
+	am := newAsyncMessager(inner, 128)
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+
+	for range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			for range 256 {
+				am.Send("message")
+			}
+		}()
+	}
+
+	close(start)
+	am.close()
+	wg.Wait()
+	am.Send("after-close")
+}
+
+func TestAsyncMessagerRecoversPanics(t *testing.T) {
+	inner := newChanMessager(10)
+	am := newAsyncMessager(&panicMessager{inner: inner}, 10)
+
+	am.Send("panic")
+	am.Send("after-panic")
+	am.SendTo("http://example.com", "panic")
+	am.SendTo("http://example.com", "after-panic-to")
+	am.close()
+
+	select {
+	case msg := <-inner.msgs:
+		if msg != "after-panic" {
+			t.Fatalf("got %q, want %q", msg, "after-panic")
+		}
+	default:
+		t.Fatal("message after panic was not delivered")
+	}
+
+	select {
+	case url := <-inner.urls:
+		if url != "http://example.com" {
+			t.Fatalf("got url %q, want %q", url, "http://example.com")
+		}
+	default:
+		t.Fatal("SendTo after panic was not delivered")
 	}
 }
 
@@ -1378,6 +1481,35 @@ func TestSlogHandlerRespectsLevel(t *testing.T) {
 	if !h.Enabled(t.Context(), slog.LevelError) {
 		t.Fatal("SlogHandler.Enabled(Error) should be true when level is error")
 	}
+}
+
+func TestSlogHandlerConcurrentReconfigure(t *testing.T) {
+	dir := t.TempDir()
+	NewZap(WithConsole(false), WithFile(true), WithPath(filepath.Join(dir, "initial")))
+	defer Sync()
+
+	sl := slog.New(SlogHandler())
+	var wg sync.WaitGroup
+	var stop atomic.Bool
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for !stop.Load() {
+			sl.Info("slog concurrent reconfigure", "key", "value")
+		}
+	}()
+
+	for i := range 20 {
+		NewZap(
+			WithConsole(false),
+			WithFile(true),
+			WithPath(filepath.Join(dir, fmt.Sprintf("reconfigured-%d", i))),
+		)
+	}
+
+	stop.Store(true)
+	wg.Wait()
 }
 
 func TestDurationEncoderOptionUsesStringEncoder(t *testing.T) {

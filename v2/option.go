@@ -206,28 +206,50 @@ func WithSampling(first, thereafter int) Option {
 // 这也是推荐用结构化字段而非字符串拼接的又一理由。
 func WithRedactKeys(keys ...string) Option {
 	return func(c *Config) error {
-		if len(keys) == 0 {
-			return nil
-		}
-		set := make(map[string]struct{}, len(keys))
-		for _, k := range keys {
-			if k != "" {
-				set[k] = struct{}{}
-			}
-		}
-		if len(set) == 0 {
-			return nil
-		}
-		c.fieldRedactor = func(fields []zapcore.Field) []zapcore.Field {
-			for i := range fields {
-				if _, ok := set[fields[i].Key]; ok {
-					fields[i] = zapcore.Field{Key: fields[i].Key, Type: zapcore.StringType, String: redactedValue}
-				}
-			}
-			return fields
+		if redactor := newFieldRedactor(keys); redactor != nil {
+			c.fieldRedactor = redactor
 		}
 		return nil
 	}
+}
+
+func newFieldRedactor(keys []string) func([]zapcore.Field) []zapcore.Field {
+	if len(keys) == 0 {
+		return nil
+	}
+
+	set := make(map[string]struct{}, len(keys))
+	for _, k := range keys {
+		if k != "" {
+			set[k] = struct{}{}
+		}
+	}
+	if len(set) == 0 {
+		return nil
+	}
+
+	return func(fields []zapcore.Field) []zapcore.Field {
+		return redactFields(fields, set)
+	}
+}
+
+func redactFields(fields []zapcore.Field, keys map[string]struct{}) []zapcore.Field {
+	for i := range fields {
+		if _, ok := keys[fields[i].Key]; ok {
+			return redactFieldsFrom(fields, keys, i)
+		}
+	}
+	return fields
+}
+
+func redactFieldsFrom(fields []zapcore.Field, keys map[string]struct{}, first int) []zapcore.Field {
+	redacted := copyFields(fields)
+	for i := first; i < len(redacted); i++ {
+		if _, ok := keys[redacted[i].Key]; ok {
+			redacted[i] = zapcore.Field{Key: redacted[i].Key, Type: zapcore.StringType, String: redactedValue}
+		}
+	}
+	return redacted
 }
 
 type ChannelOption func(*channelConfig) error

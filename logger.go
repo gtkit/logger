@@ -401,7 +401,7 @@ func HInfo(msg string, fields ...zap.Field) {
 	defer state.release()
 	state.root.Info(msg, fields...)
 	if state.messager != nil {
-		state.messager.Send(formatFieldsMsg(msg, fields))
+		state.messager.Send(formatHookFieldsMsg(msg, fields, state.fieldRedactor))
 	}
 }
 
@@ -425,7 +425,7 @@ func HInfoTo(url, msg string, fields ...zap.Field) {
 	defer state.release()
 	state.root.Info(msg, fields...)
 	if state.messager != nil {
-		state.messager.SendTo(url, formatFieldsMsg(msg, fields))
+		state.messager.SendTo(url, formatHookFieldsMsg(msg, fields, state.fieldRedactor))
 	}
 }
 
@@ -449,7 +449,7 @@ func HError(msg string, fields ...zap.Field) {
 	defer state.release()
 	state.root.Error(msg, fields...)
 	if state.messager != nil {
-		state.messager.Send(formatFieldsMsg(msg, fields))
+		state.messager.Send(formatHookFieldsMsg(msg, fields, state.fieldRedactor))
 	}
 }
 
@@ -473,7 +473,7 @@ func HErrorTo(url, msg string, fields ...zap.Field) {
 	defer state.release()
 	state.root.Error(msg, fields...)
 	if state.messager != nil {
-		state.messager.SendTo(url, formatFieldsMsg(msg, fields))
+		state.messager.SendTo(url, formatHookFieldsMsg(msg, fields, state.fieldRedactor))
 	}
 }
 
