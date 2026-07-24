@@ -403,7 +403,9 @@ func swapLoggerState(next *loggerState, replaceGlobals bool) *loggerState {
 	}
 
 	if replaceGlobals {
-		next.undo = zap.ReplaceGlobals(next.root)
+		// 抵消内部包装层的 caller skip：zap.L()/zap.S() 由调用方直接使用，
+		// 不经过本库包装函数，原样安装 root 会导致 caller 多跳一帧。
+		next.undo = zap.ReplaceGlobals(next.root.WithOptions(zap.AddCallerSkip(-1)))
 	}
 
 	return previous

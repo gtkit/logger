@@ -393,9 +393,9 @@ logger.Channel("order").InfoCtx(ctx, "order shipped")
 
 ## API 方法一览
 
-## License
+### 获取底层 zap logger
 
-Apache-2.0. See [LICENSE](./LICENSE).
+`Zap()` / `Sugar()`（以及 `Channel("x").Zap()`）返回底层 `*zap.Logger` / `*zap.SugaredLogger`，可直接打日志或交给需要原生 zap 的第三方库（gorm、grpc 中间件等）。返回的 logger 已修正 caller skip：直接调用时 `caller` 指向你的真实代码位置。初始化后 `zap.L()` / `zap.S()` 同样可用且 caller 准确。若你要在它外面再包一层自己的封装，按 zap 惯例自行叠加 `WithOptions(zap.AddCallerSkip(1))`。
 
 ### Structured（高性能，类型安全）
 
@@ -678,3 +678,7 @@ func HandleOrder(ctx context.Context) {
 ```bash
 go test -run ^$ -bench "Benchmark(Info|Channel)" -benchmem
 ```
+
+## License
+
+Apache-2.0. See [LICENSE](./LICENSE).

@@ -7,23 +7,31 @@ import (
 	"go.uber.org/zap"
 )
 
+// Zap 返回底层 *zap.Logger 供调用方直接使用或交给第三方库。
+// 返回的 logger 已抵消内部包装层的 caller skip，直接调用时 caller 指向真实调用点。
 func (l *Logger) Zap() *zap.Logger {
-	return l.zap
+	return l.zap.WithOptions(zap.AddCallerSkip(-1))
 }
 
+// Sugar 返回底层 *zap.SugaredLogger 供调用方直接使用。
+// 返回的 logger 已抵消内部包装层的 caller skip，直接调用时 caller 指向真实调用点。
 func (l *Logger) Sugar() *zap.SugaredLogger {
-	return l.sugar
+	return l.zap.WithOptions(zap.AddCallerSkip(-1)).Sugar()
 }
 
+// With 返回附加了预绑定字段的新 Logger，原实例不受影响。
 func (l *Logger) With(fields ...zap.Field) *Logger {
 	combined := append(copyFields(l.fields), fields...)
 	return l.rebuild(l.rootLogger(), l.name, l.channel, combined)
 }
 
+// Named 返回追加了 logger 名称段的新 Logger，名称以 "." 级联。
 func (l *Logger) Named(name string) *Logger {
 	return l.rebuild(l.rootLogger(), joinLoggerName(l.name, name), l.channel, l.fields)
 }
 
+// Channel 返回指定名称的 channel Logger；名称首尾空白会被去除，空名返回原实例。
+// 未注册的 channel 写默认输出并自动附加 channel 字段。
 func (l *Logger) Channel(name string) *Logger {
 	trimmed := strings.TrimSpace(name)
 	if trimmed == "" {
@@ -62,102 +70,127 @@ func (l *Logger) GetLevel() string {
 	return "info"
 }
 
+// Undo 恢复 New 之前的 zap 全局 logger（zap.L()/zap.S()），幂等。
 func (l *Logger) Undo() {
 	if l.state != nil {
 		l.state.Undo()
 	}
 }
 
+// Sync 恢复 zap 全局 logger、flush 缓冲日志并关闭文件等资源，幂等。
+// 调用后本 Logger 及其派生实例不应再用于写日志。
 func (l *Logger) Sync() {
 	if l.state != nil {
 		l.state.Sync()
 	}
 }
 
+// Debug 以 Debug 级别记录结构化字段日志。
 func (l *Logger) Debug(msg string, fields ...zap.Field) {
 	l.zap.Debug(msg, fields...)
 }
 
+// Info 以 Info 级别记录结构化字段日志。
 func (l *Logger) Info(msg string, fields ...zap.Field) {
 	l.zap.Info(msg, fields...)
 }
 
+// Warn 以 Warn 级别记录结构化字段日志。
 func (l *Logger) Warn(msg string, fields ...zap.Field) {
 	l.zap.Warn(msg, fields...)
 }
 
+// Error 以 Error 级别记录结构化字段日志。
 func (l *Logger) Error(msg string, fields ...zap.Field) {
 	l.zap.Error(msg, fields...)
 }
 
+// DPanic 以 DPanic 级别记录结构化字段日志；development 模式下会 panic。
 func (l *Logger) DPanic(msg string, fields ...zap.Field) {
 	l.zap.DPanic(msg, fields...)
 }
 
+// Panic 以 Panic 级别记录结构化字段日志，随后 panic。
 func (l *Logger) Panic(msg string, fields ...zap.Field) {
 	l.zap.Panic(msg, fields...)
 }
 
+// Fatal 以 Fatal 级别记录结构化字段日志，随后调用 os.Exit(1)。
 func (l *Logger) Fatal(msg string, fields ...zap.Field) {
 	l.zap.Fatal(msg, fields...)
 }
 
+// Debugf 以 Debug 级别记录 fmt 风格格式化日志。
 func (l *Logger) Debugf(format string, args ...any) {
 	l.sugar.Debugf(format, args...)
 }
 
+// Infof 以 Info 级别记录 fmt 风格格式化日志。
 func (l *Logger) Infof(format string, args ...any) {
 	l.sugar.Infof(format, args...)
 }
 
+// Debugw 以 Debug 级别记录 Sugar 风格 key-value 日志。
 func (l *Logger) Debugw(msg string, keysAndValues ...any) {
 	l.sugar.Debugw(msg, keysAndValues...)
 }
 
+// Infow 以 Info 级别记录 Sugar 风格 key-value 日志。
 func (l *Logger) Infow(msg string, keysAndValues ...any) {
 	l.sugar.Infow(msg, keysAndValues...)
 }
 
+// Warnw 以 Warn 级别记录 Sugar 风格 key-value 日志。
 func (l *Logger) Warnw(msg string, keysAndValues ...any) {
 	l.sugar.Warnw(msg, keysAndValues...)
 }
 
+// Errorw 以 Error 级别记录 Sugar 风格 key-value 日志。
 func (l *Logger) Errorw(msg string, keysAndValues ...any) {
 	l.sugar.Errorw(msg, keysAndValues...)
 }
 
+// Warnf 以 Warn 级别记录 fmt 风格格式化日志。
 func (l *Logger) Warnf(format string, args ...any) {
 	l.sugar.Warnf(format, args...)
 }
 
+// Errorf 以 Error 级别记录 fmt 风格格式化日志。
 func (l *Logger) Errorf(format string, args ...any) {
 	l.sugar.Errorf(format, args...)
 }
 
+// DPanicf 以 DPanic 级别记录 fmt 风格格式化日志；development 模式下会 panic。
 func (l *Logger) DPanicf(format string, args ...any) {
 	l.sugar.DPanicf(format, args...)
 }
 
+// Panicf 以 Panic 级别记录 fmt 风格格式化日志，随后 panic。
 func (l *Logger) Panicf(format string, args ...any) {
 	l.sugar.Panicf(format, args...)
 }
 
+// Fatalf 以 Fatal 级别记录 fmt 风格格式化日志，随后调用 os.Exit(1)。
 func (l *Logger) Fatalf(format string, args ...any) {
 	l.sugar.Fatalf(format, args...)
 }
 
+// DebugCtx 以 Debug 级别记录结构化字段日志，并自动合并 ContextFieldsFunc 从 ctx 提取的字段。
 func (l *Logger) DebugCtx(ctx context.Context, msg string, fields ...zap.Field) {
 	l.zap.Debug(msg, l.ctxFields(ctx, fields)...)
 }
 
+// InfoCtx 以 Info 级别记录结构化字段日志，并自动合并 ctx 字段。
 func (l *Logger) InfoCtx(ctx context.Context, msg string, fields ...zap.Field) {
 	l.zap.Info(msg, l.ctxFields(ctx, fields)...)
 }
 
+// WarnCtx 以 Warn 级别记录结构化字段日志，并自动合并 ctx 字段。
 func (l *Logger) WarnCtx(ctx context.Context, msg string, fields ...zap.Field) {
 	l.zap.Warn(msg, l.ctxFields(ctx, fields)...)
 }
 
+// ErrorCtx 以 Error 级别记录结构化字段日志，并自动合并 ctx 字段。
 func (l *Logger) ErrorCtx(ctx context.Context, msg string, fields ...zap.Field) {
 	l.zap.Error(msg, l.ctxFields(ctx, fields)...)
 }
@@ -224,6 +257,7 @@ func (l *Logger) ErrorwCtx(ctx context.Context, msg string, keysAndValues ...any
 	l.sugar.Errorw(msg, l.ctxKeysAndValues(ctx, keysAndValues)...)
 }
 
+// LogIf 在 err != nil 时以 Error 级别记录一条日志；err 为 nil 时什么都不做。
 func (l *Logger) LogIf(err error) {
 	if err != nil {
 		l.zap.Error("error occurred", zap.Error(err))
@@ -251,6 +285,7 @@ func (l *Logger) WarnIfCtx(ctx context.Context, err error) {
 	}
 }
 
+// HInfo 以 Info 级别写日志，并通过 Messager 异步推送消息（未配置 Messager 时仅写日志）。
 func (l *Logger) HInfo(msg string, fields ...zap.Field) {
 	l.zap.Info(msg, fields...)
 	if l.messager != nil {
@@ -258,6 +293,7 @@ func (l *Logger) HInfo(msg string, fields ...zap.Field) {
 	}
 }
 
+// HInfof 以 Info 级别写 fmt 风格日志，并通过 Messager 异步推送消息。
 func (l *Logger) HInfof(format string, args ...any) {
 	l.sugar.Infof(format, args...)
 	if l.messager != nil {
@@ -265,6 +301,7 @@ func (l *Logger) HInfof(format string, args ...any) {
 	}
 }
 
+// HInfoTo 以 Info 级别写日志，并通过 Messager 异步推送消息到指定 URL。
 func (l *Logger) HInfoTo(url, msg string, fields ...zap.Field) {
 	l.zap.Info(msg, fields...)
 	if l.messager != nil {
@@ -272,6 +309,7 @@ func (l *Logger) HInfoTo(url, msg string, fields ...zap.Field) {
 	}
 }
 
+// HInfoTof 以 Info 级别写 fmt 风格日志，并通过 Messager 异步推送消息到指定 URL。
 func (l *Logger) HInfoTof(url, format string, args ...any) {
 	l.sugar.Infof(format, args...)
 	if l.messager != nil {
@@ -279,6 +317,7 @@ func (l *Logger) HInfoTof(url, format string, args ...any) {
 	}
 }
 
+// HError 以 Error 级别写日志，并通过 Messager 异步推送消息（未配置 Messager 时仅写日志）。
 func (l *Logger) HError(msg string, fields ...zap.Field) {
 	l.zap.Error(msg, fields...)
 	if l.messager != nil {
@@ -286,6 +325,7 @@ func (l *Logger) HError(msg string, fields ...zap.Field) {
 	}
 }
 
+// HErrorf 以 Error 级别写 fmt 风格日志，并通过 Messager 异步推送消息。
 func (l *Logger) HErrorf(format string, args ...any) {
 	l.sugar.Errorf(format, args...)
 	if l.messager != nil {
@@ -293,6 +333,7 @@ func (l *Logger) HErrorf(format string, args ...any) {
 	}
 }
 
+// HErrorTo 以 Error 级别写日志，并通过 Messager 异步推送消息到指定 URL。
 func (l *Logger) HErrorTo(url, msg string, fields ...zap.Field) {
 	l.zap.Error(msg, fields...)
 	if l.messager != nil {
@@ -300,6 +341,7 @@ func (l *Logger) HErrorTo(url, msg string, fields ...zap.Field) {
 	}
 }
 
+// HErrorTof 以 Error 级别写 fmt 风格日志，并通过 Messager 异步推送消息到指定 URL。
 func (l *Logger) HErrorTof(url, format string, args ...any) {
 	l.sugar.Errorf(format, args...)
 	if l.messager != nil {

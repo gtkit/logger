@@ -72,6 +72,8 @@ func (s *lifecycleState) Sync() {
 	})
 }
 
+// Logger 是 v2 的核心日志实例，封装 zap 并提供 channel 路由、消息推送与 ctx 字段注入能力。
+// 由 New/MustNew 构建；With/Named/Channel 派生的实例共享底层资源。所有方法并发安全。
 type Logger struct {
 	base          *zap.Logger
 	zap           *zap.Logger
@@ -84,6 +86,8 @@ type Logger struct {
 	fields        []zap.Field
 }
 
+// New 按 Functional Options 构建 Logger，并将其安装为 zap 全局 logger；失败返回 error。
+// 使用完毕通过 Sync 释放资源。
 func New(opts ...Option) (*Logger, error) {
 	cfg := defaultConfig()
 	for _, opt := range opts {
@@ -95,6 +99,7 @@ func New(opts ...Option) (*Logger, error) {
 	return build(cfg)
 }
 
+// MustNew 与 New 相同，但失败时 panic，适合 main/初始化阶段。
 func MustNew(opts ...Option) *Logger {
 	l, err := New(opts...)
 	if err != nil {
@@ -117,7 +122,9 @@ func build(cfg *Config) (*Logger, error) {
 		msgr = asyncMsg
 	}
 
-	undo := zap.ReplaceGlobals(built.root)
+	// 抵消内部包装层的 caller skip：zap.L()/zap.S() 由调用方直接使用，
+	// 不经过本库包装方法，原样安装 root 会导致 caller 多跳一帧。
+	undo := zap.ReplaceGlobals(built.root.WithOptions(zap.AddCallerSkip(-1)))
 	state := &lifecycleState{
 		root:          built.root,
 		undo:          undo,

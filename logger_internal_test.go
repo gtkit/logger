@@ -326,6 +326,48 @@ func TestCallerSkipChannelReportsUserCode(t *testing.T) {
 	}
 }
 
+func TestCallerSkipDirectZapReportsUserCode(t *testing.T) {
+	dir := t.TempDir()
+	logpath := filepath.Join(dir, "test")
+
+	NewZap(
+		WithPath(logpath),
+		WithFile(true),
+		WithConsole(false),
+		WithOutJSON(false),
+	)
+	defer Sync()
+
+	Zap().Info("direct-zap-check")
+	Sugar().Infof("direct-sugar-check")
+	zap.L().Info("direct-global-check")
+	Channel("pay").Zap().Info("direct-channel-zap-check")
+
+	content := readLogFile(t, logpath+"-info.log")
+	for _, msg := range []string{
+		"direct-zap-check",
+		"direct-sugar-check",
+		"direct-global-check",
+		"direct-channel-zap-check",
+	} {
+		line := logLineContaining(t, content, msg)
+		if !strings.Contains(line, "logger_internal_test.go") {
+			t.Errorf("%s: caller should reference test file, got: %s", msg, line)
+		}
+	}
+}
+
+func logLineContaining(t *testing.T, content, substr string) string {
+	t.Helper()
+	for line := range strings.SplitSeq(content, "\n") {
+		if strings.Contains(line, substr) {
+			return line
+		}
+	}
+	t.Fatalf("log line containing %q not found in: %s", substr, content)
+	return ""
+}
+
 func readLogFile(t *testing.T, path string) string {
 	t.Helper()
 
@@ -1702,6 +1744,55 @@ func TestSlogHandlerGroupAttr(t *testing.T) {
 	}
 	if !strings.Contains(content, "method") {
 		t.Fatalf("slog group nested field 'method' not found: %s", content)
+	}
+}
+
+func TestSlogHandlerIgnoresZeroAttr(t *testing.T) {
+	dir := t.TempDir()
+	logpath := filepath.Join(dir, "app")
+
+	NewZap(
+		WithConsole(false),
+		WithFile(true),
+		WithOutJSON(true),
+		WithPath(logpath),
+	)
+	defer Sync()
+
+	sl := slog.New(SlogHandler())
+	sl.Info("zero-attr-handle", slog.Attr{})
+
+	slog.New(SlogHandler().WithAttrs([]slog.Attr{{}})).Info("zero-attr-withattrs")
+
+	content := readLogFile(t, logpath+"-info.log")
+	if strings.Contains(content, `"":`) {
+		t.Fatalf("zero-value slog.Attr should be ignored, got empty key field: %s", content)
+	}
+}
+
+func TestSlogHandlerWithGroupEmptyName(t *testing.T) {
+	dir := t.TempDir()
+	logpath := filepath.Join(dir, "app")
+
+	NewZap(
+		WithConsole(false),
+		WithFile(true),
+		WithOutJSON(true),
+		WithPath(logpath),
+	)
+	defer Sync()
+
+	h := SlogHandler()
+	if got := h.WithGroup(""); got != h {
+		t.Fatal(`WithGroup("") should return the receiver`)
+	}
+
+	// WithGroup("") 不得影响后续字段 key（不产生 "req..k" 之类的多余前缀）。
+	slog.New(h.WithGroup("req").WithGroup("")).Info("empty-group-key-check", "k", "v")
+
+	content := readLogFile(t, logpath+"-info.log")
+	if !strings.Contains(content, `"req.k":"v"`) {
+		t.Fatalf(`field key should stay "req.k" after WithGroup(""): %s`, content)
 	}
 }
 

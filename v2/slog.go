@@ -35,6 +35,10 @@ func (h *zapSlogHandler) Handle(_ context.Context, record slog.Record) error {
 	fields = append(fields, h.attrs...)
 
 	record.Attrs(func(a slog.Attr) bool {
+		// slog.Handler 契约：零值 Attr 必须忽略。
+		if a.Equal(slog.Attr{}) {
+			return true
+		}
 		fields = append(fields, slogAttrToZapField(h.group, a))
 		return true
 	})
@@ -60,7 +64,14 @@ func (h *zapSlogHandler) Handle(_ context.Context, record slog.Record) error {
 func (h *zapSlogHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
 	fields := make([]zap.Field, 0, len(attrs))
 	for _, a := range attrs {
+		// slog.Handler 契约：零值 Attr 必须忽略。
+		if a.Equal(slog.Attr{}) {
+			continue
+		}
 		fields = append(fields, slogAttrToZapField(h.group, a))
+	}
+	if len(fields) == 0 {
+		return h
 	}
 
 	return &zapSlogHandler{
@@ -72,6 +83,11 @@ func (h *zapSlogHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
 }
 
 func (h *zapSlogHandler) WithGroup(name string) slog.Handler {
+	// slog.Handler 契约：name 为空时返回 receiver 本身。
+	if name == "" {
+		return h
+	}
+
 	newGroup := name
 	if h.group != "" {
 		newGroup = h.group + "." + name
