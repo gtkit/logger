@@ -11,6 +11,32 @@
 
 ---
 
+## logger v1.8.3 / v2.2.3 — 2026-07-24
+
+### Fixed
+
+- 修复 `Zap()`/`Sugar()`（v1 包级与 `Channel`、v2 `Logger` 方法）返回的 logger 以及 `zap.L()`/`zap.S()` 全局 logger 直接打日志时 caller 错位一帧的问题（此前显示 `runtime/proc.go` 等无效位置），现在 caller 指向调用方真实代码位置；经由本库包装方法打日志的 caller 行为不变。
+- 修复 `SlogHandler` 违反 `slog.Handler` 契约的两处问题（v1 + v2）：零值 `slog.Attr` 现在会被忽略（不再输出空 key 字段），`WithGroup("")` 现在返回原 handler 本身。
+
+### Changed
+
+- **依赖升级**：`github.com/gtkit/logrotate v1.1.2 → v1.1.3`（v1 + v2）。上游修复夏令时时区跨天边界计算、同一毫秒多次轮转备份文件名冲突、`MaxSize` 为负数时写入永久失败等问题；结构体字面量接入方式不受影响，无需迁移。
+- 补齐全部导出 API 的 GoDoc、包级文档（doc.go）与核心 API 的 Example 测试；README 新增「获取底层 zap logger」使用说明。
+
+## logger v1.8.2 / v2.2.2 — 2026-07-21
+
+### Fixed
+
+- 修复异步 `Messager` 在发送与关闭并发时可能触发 panic 的问题；关闭操作现在具备幂等性，并会排空已进入队列的消息。
+- 隔离外部 `Messager` 实现的 panic，单次推送异常不再终止异步消息工作协程。
+- 修复 `WithRedactKeys` 可能修改调用方字段切片的问题，并确保 H 系列消息推送同样应用字段脱敏规则。
+- 修复 v1 `SlogHandler` 与日志器重新配置并发执行时可能提前关闭旧日志资源的问题。
+- 忽略终端和管道环境下无实际影响的 `Sync` 错误，同时继续报告真实文件同步错误。
+
+### Changed
+
+- 补充 v2 异步消息队列大小配置和丢弃消息计数的使用文档。
+
 ## logger v1.8.1 / v2.2.1 — 2026-06-12
 
 ### Changed
