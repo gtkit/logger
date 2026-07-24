@@ -12,6 +12,7 @@ import (
 // Option configures the package-level logger.
 type Option func(*logConfig) error
 
+// WithConsole 设置是否输出到控制台（stdout），默认 false。
 func WithConsole(b bool) Option {
 	return func(c *logConfig) error {
 		c.consoleStdout = b
@@ -19,6 +20,7 @@ func WithConsole(b bool) Option {
 	}
 }
 
+// WithFile 设置是否输出到文件，默认 true。
 func WithFile(b bool) Option {
 	return func(c *logConfig) error {
 		c.fileStdout = b
@@ -26,6 +28,7 @@ func WithFile(b bool) Option {
 	}
 }
 
+// WithDivision 设置日志切割方式，可选 "size"、"daily"、"both"，默认 "both"。
 func WithDivision(d string) Option {
 	return func(c *logConfig) error {
 		switch rotationDivision(d) {
@@ -38,6 +41,7 @@ func WithDivision(d string) Option {
 	}
 }
 
+// WithPath 设置日志文件路径前缀（最终文件名为 {path}-{level}.log），默认 "./logs/"。
 func WithPath(p string) Option {
 	return func(c *logConfig) error {
 		if p == "" {
@@ -48,6 +52,7 @@ func WithPath(p string) Option {
 	}
 }
 
+// WithOutJSON 设置是否以 JSON 编码输出，默认 false（console 编码）。
 func WithOutJSON(b bool) Option {
 	return func(c *logConfig) error {
 		c.outJSON = b
@@ -55,6 +60,7 @@ func WithOutJSON(b bool) Option {
 	}
 }
 
+// WithDurationEncoder 设置 time.Duration 字段的编码方式，默认 zapcore.SecondsDurationEncoder。
 func WithDurationEncoder(encoder zapcore.DurationEncoder) Option {
 	return func(c *logConfig) error {
 		if encoder == nil {
@@ -65,6 +71,7 @@ func WithDurationEncoder(encoder zapcore.DurationEncoder) Option {
 	}
 }
 
+// WithCompress 设置是否压缩归档的历史日志文件，默认 true。
 func WithCompress(b bool) Option {
 	return func(c *logConfig) error {
 		c.compress = b
@@ -72,6 +79,7 @@ func WithCompress(b bool) Option {
 	}
 }
 
+// WithMaxAge 设置历史日志最大保留天数，0 表示不按时间清理，默认 7。
 func WithMaxAge(days int) Option {
 	return func(c *logConfig) error {
 		if days < 0 {
@@ -82,6 +90,7 @@ func WithMaxAge(days int) Option {
 	}
 }
 
+// WithMaxBackups 设置历史日志最大备份数量，0 表示不按数量清理，默认 50。
 func WithMaxBackups(n int) Option {
 	return func(c *logConfig) error {
 		if n < 0 {
@@ -92,6 +101,7 @@ func WithMaxBackups(n int) Option {
 	}
 }
 
+// WithMaxSize 设置单个日志文件的最大体积（MB），默认 512。
 func WithMaxSize(mb int) Option {
 	return func(c *logConfig) error {
 		if mb <= 0 {
@@ -102,6 +112,7 @@ func WithMaxSize(mb int) Option {
 	}
 }
 
+// WithLevel 设置日志级别，支持 debug/info/warn/error/dpanic/panic/fatal，默认 "info"。
 func WithLevel(l string) Option {
 	return func(c *logConfig) error {
 		if _, ok := levelMap[l]; !ok {
@@ -112,6 +123,7 @@ func WithLevel(l string) Option {
 	}
 }
 
+// WithMessager 设置外部消息推送实现，H 系列方法写日志后会通过它异步推送消息。
 func WithMessager(m Messager) Option {
 	return func(c *logConfig) error {
 		c.messager = m
@@ -119,6 +131,7 @@ func WithMessager(m Messager) Option {
 	}
 }
 
+// WithMessagerQueueSize 设置异步推送队列大小，队列满时丢弃推送（可用 DroppedMessages 监控），默认 1024。
 func WithMessagerQueueSize(size int) Option {
 	return func(c *logConfig) error {
 		if size <= 0 {
@@ -129,6 +142,7 @@ func WithMessagerQueueSize(size int) Option {
 	}
 }
 
+// WithContextFields 注册从 context.Context 提取日志字段的函数，供 *Ctx 系列方法自动合并 trace_id 等链路信息。
 func WithContextFields(fn ContextFieldsFunc) Option {
 	return func(c *logConfig) error {
 		c.contextFields = fn
@@ -286,6 +300,7 @@ func WithChannel(name string, opts ...ChannelOption) Option {
 	}
 }
 
+// WithChannelPath 设置 channel 日志文件的路径前缀（必填）。
 func WithChannelPath(path string) ChannelOption {
 	return func(c *channelConfig) error {
 		if path == "" {
@@ -296,6 +311,7 @@ func WithChannelPath(path string) ChannelOption {
 	}
 }
 
+// WithChannelDuplicateToDefault 设置 channel 日志是否同时写入默认输出，默认 true。
 func WithChannelDuplicateToDefault(enabled bool) ChannelOption {
 	return func(c *channelConfig) error {
 		c.duplicateToDefault = enabled

@@ -110,6 +110,9 @@ func formatMsg(template string, fmtArgs []any) string {
 	return fmt.Sprint(fmtArgs...)
 }
 
+// formatFieldsMsg 把结构化字段序列化后追加到消息文本，用于 Messager 推送。
+// 这里用标准库 encoding/json 而非 gtkit/json：仅服务于非热路径的 Hook 消息格式化，
+// 不值得为此引入额外依赖（取舍记录，见项目 JSON 选型规则）。
 func formatFieldsMsg(msg string, fields []zap.Field) string {
 	if len(fields) == 0 {
 		return msg
