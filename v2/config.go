@@ -9,6 +9,7 @@ import (
 )
 
 // ContextFieldsFunc 从 context.Context 中提取需要注入日志的字段。
+// 实现必须并发安全：会被多个 goroutine 的 *Ctx 方法并发调用。
 // 典型用法：提取 trace_id、request_id 等链路追踪信息。
 type ContextFieldsFunc func(ctx context.Context) []zap.Field
 
@@ -76,6 +77,11 @@ type Config struct {
 	samplingFirst      int
 	samplingThereafter int
 	fieldRedactor      func([]zapcore.Field) []zapcore.Field
+	replaceGlobals     bool
+	basePath           string
+	// consoleWriter 控制台输出目标；nil 用默认 os.Stdout。
+	// 仅库内部使用（兜底实例走 stderr，避免污染 CLI 的 stdout 协议输出）。
+	consoleWriter zapcore.WriteSyncer
 }
 
 type channelConfig struct {
@@ -97,6 +103,7 @@ func defaultConfig() *Config {
 		maxSize:           defaultMaxSize,
 		level:             "info",
 		messagerQueueSize: 1024,
+		replaceGlobals:    true,
 		channels:          make(map[string]*channelConfig),
 	}
 }

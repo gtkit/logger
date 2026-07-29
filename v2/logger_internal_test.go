@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1003,57 +1002,6 @@ func TestSetLevel_InvalidLevelNoChange(t *testing.T) {
 	}
 }
 
-// ============================================================
-// slog bridge tests
-// ============================================================
-
-func TestSlogHandler_NoPanic(t *testing.T) {
-	l := MustNew(WithConsole(false), WithFile(false))
-	defer l.Sync()
-
-	sl := slog.New(l.SlogHandler())
-	if sl == nil {
-		t.Fatal("slog.New returned nil")
-	}
-}
-
-func TestSlogHandler_WritesToFile(t *testing.T) {
-	tempDir := t.TempDir()
-	path := filepath.Join(tempDir, "logs", "app")
-
-	l := MustNew(
-		WithConsole(false),
-		WithFile(true),
-		WithOutJSON(true),
-		WithPath(path),
-	)
-	defer l.Sync()
-
-	sl := slog.New(l.SlogHandler())
-	sl.Info("slog-bridge-test", "key", "val123")
-
-	content := readLogFile(t, path+"-info.log")
-	if !strings.Contains(content, "slog-bridge-test") {
-		t.Fatalf("slog message not found in log: %s", content)
-	}
-	if !strings.Contains(content, "val123") {
-		t.Fatalf("slog attr not found in log: %s", content)
-	}
-}
-
-func TestSlogHandler_EnabledRespectsLevel(t *testing.T) {
-	l := MustNew(WithConsole(false), WithFile(false), WithLevel("error"))
-	defer l.Sync()
-
-	h := l.SlogHandler()
-	if h.Enabled(t.Context(), slog.LevelInfo) {
-		t.Fatal("slog handler should not enable Info when logger level is error")
-	}
-	if !h.Enabled(t.Context(), slog.LevelError) {
-		t.Fatal("slog handler should enable Error when logger level is error")
-	}
-}
-
 func TestDurationEncoderOption_UsesStringEncoder(t *testing.T) {
 	tempDir := t.TempDir()
 	path := filepath.Join(tempDir, "logs", "app")
@@ -1193,88 +1141,6 @@ func TestNewRestyAdapterPanicsOnNil(t *testing.T) {
 // ============================================================
 // slog KindGroup recursive handling
 // ============================================================
-
-func TestSlogHandlerGroupAttr(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "logs", "app")
-
-	l := MustNew(
-		WithConsole(false),
-		WithFile(true),
-		WithOutJSON(true),
-		WithPath(path),
-		WithLevel("info"),
-	)
-	defer l.Sync()
-
-	sl := slog.New(l.SlogHandler())
-	sl.Info("group-test",
-		slog.Group("request",
-			slog.String("method", "POST"),
-			slog.Int("status", 201),
-		),
-	)
-
-	content := readLogFile(t, path+"-info.log")
-	if !strings.Contains(content, "group-test") {
-		t.Fatalf("slog group message not found: %s", content)
-	}
-	if !strings.Contains(content, "request") {
-		t.Fatalf("slog group key 'request' not found: %s", content)
-	}
-	if !strings.Contains(content, "method") {
-		t.Fatalf("slog group nested field 'method' not found: %s", content)
-	}
-}
-
-func TestSlogHandler_IgnoresZeroAttr(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "logs", "app")
-
-	l := MustNew(
-		WithConsole(false),
-		WithFile(true),
-		WithOutJSON(true),
-		WithPath(path),
-	)
-	defer l.Sync()
-
-	sl := slog.New(l.SlogHandler())
-	sl.Info("zero-attr-handle", slog.Attr{})
-
-	slog.New(l.SlogHandler().WithAttrs([]slog.Attr{{}})).Info("zero-attr-withattrs")
-
-	content := readLogFile(t, path+"-info.log")
-	if strings.Contains(content, `"":`) {
-		t.Fatalf("zero-value slog.Attr should be ignored, got empty key field: %s", content)
-	}
-}
-
-func TestSlogHandler_WithGroupEmptyName(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "logs", "app")
-
-	l := MustNew(
-		WithConsole(false),
-		WithFile(true),
-		WithOutJSON(true),
-		WithPath(path),
-	)
-	defer l.Sync()
-
-	h := l.SlogHandler()
-	if got := h.WithGroup(""); got != h {
-		t.Fatal(`WithGroup("") should return the receiver`)
-	}
-
-	// WithGroup("") 不得影响后续字段 key（不产生 "req..k" 之类的多余前缀）。
-	slog.New(h.WithGroup("req").WithGroup("")).Info("empty-group-key-check", "k", "v")
-
-	content := readLogFile(t, path+"-info.log")
-	if !strings.Contains(content, `"req.k":"v"`) {
-		t.Fatalf(`field key should stay "req.k" after WithGroup(""): %s`, content)
-	}
-}
 
 // ============================================================
 // caller skip: 直接使用导出的 zap logger

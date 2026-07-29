@@ -25,8 +25,11 @@ type channelRoute struct {
 const maxDynamicChannels = 1024
 
 type lifecycleState struct {
-	root                   *zap.Logger
-	undo                   func()
+	root *zap.Logger
+	undo func()
+	// installed 是本实例安装进 zap 全局的视图指针；Undo 仅在全局仍指向它时
+	// 才执行恢复，避免延迟 Sync 的旧实例把后来者安装的全局踩掉。
+	installed              *zap.Logger
 	closers                []io.Closer
 	asyncMsg               *asyncMessager
 	atomicLevel            zap.AtomicLevel
@@ -46,9 +49,14 @@ func (s *lifecycleState) Undo() {
 	}
 
 	s.undoOnce.Do(func() {
-		if s.undo != nil {
-			s.undo()
+		if s.undo == nil {
+			return
 		}
+		// 全局已被后来者替换时放弃恢复：只收拾自己的摊位，不踩后来者。
+		if s.installed != nil && zap.L() != s.installed {
+			return
+		}
+		s.undo()
 	})
 }
 
@@ -73,7 +81,9 @@ func (s *lifecycleState) Sync() {
 }
 
 // Logger 是 v2 的核心日志实例，封装 zap 并提供 channel 路由、消息推送与 ctx 字段注入能力。
-// 由 New/MustNew 构建；With/Named/Channel 派生的实例共享底层资源。所有方法并发安全。
+// 由 New/MustNew 构建；With/Named/Channel 派生的实例共享底层资源。
+// 全部记录方法并发安全；Sync/Undo 是生命周期操作，须在停止新写入、
+// 在途调用结束后串行执行（关闭后的并发写入可能重新打开已关闭的文件句柄）。
 type Logger struct {
 	base          *zap.Logger
 	zap           *zap.Logger
@@ -84,9 +94,17 @@ type Logger struct {
 	channel       string
 	name          string
 	fields        []zap.Field
+	// callerSkip 是本实例相对 canonical 视图的 caller 偏移（facade 转发层数）。
+	// 偏移只存在于 zap/sugar 视图与本元数据中；base 与所有共享缓存
+	// （注册 channel、动态 channel base）永远保持 canonical（零偏移）。
+	callerSkip int
+	// boundRequestID 记录 With() 预绑定字段中是否含 request_id（构建期一次判定，
+	// 热路径零扫描）。预绑定是作用域身份，request_id 去重优先级最高。
+	boundRequestID bool
 }
 
-// New 按 Functional Options 构建 Logger，并将其安装为 zap 全局 logger；失败返回 error。
+// New 按 Functional Options 构建 Logger；失败返回 error。
+// 默认将实例安装为 zap 全局 logger（zap.L()/zap.S()），可经 WithReplaceGlobals(false) 关闭。
 // 使用完毕通过 Sync 释放资源。
 func New(opts ...Option) (*Logger, error) {
 	cfg := defaultConfig()
@@ -110,6 +128,8 @@ func MustNew(opts ...Option) *Logger {
 }
 
 func build(cfg *Config) (*Logger, error) {
+	applyBasePath(cfg)
+
 	built, err := buildLoggerSet(cfg)
 	if err != nil {
 		return nil, err
@@ -124,10 +144,16 @@ func build(cfg *Config) (*Logger, error) {
 
 	// 抵消内部包装层的 caller skip：zap.L()/zap.S() 由调用方直接使用，
 	// 不经过本库包装方法，原样安装 root 会导致 caller 多跳一帧。
-	undo := zap.ReplaceGlobals(built.root.WithOptions(zap.AddCallerSkip(-1)))
+	var undo func()
+	var installed *zap.Logger
+	if cfg.replaceGlobals {
+		installed = built.root.WithOptions(zap.AddCallerSkip(-1))
+		undo = zap.ReplaceGlobals(installed)
+	}
 	state := &lifecycleState{
 		root:          built.root,
 		undo:          undo,
+		installed:     installed,
 		closers:       built.closers,
 		asyncMsg:      asyncMsg,
 		atomicLevel:   built.atomicLevel,
@@ -157,6 +183,34 @@ func build(cfg *Config) (*Logger, error) {
 	}
 
 	return rootLogger, nil
+}
+
+// applyBasePath 把相对日志路径（含 channel 路径）锚定到 basePath；
+// 绝对路径原样使用，未设置 basePath 时不做任何改写（与既有行为一致）。
+func applyBasePath(cfg *Config) {
+	if cfg.basePath == "" {
+		return
+	}
+	cfg.path = anchorToBase(cfg.basePath, cfg.path)
+	for _, ch := range cfg.channels {
+		ch.path = anchorToBase(cfg.basePath, ch.path)
+	}
+}
+
+func anchorToBase(base, path string) string {
+	if path == "" || filepath.IsAbs(path) {
+		return path
+	}
+
+	joined := filepath.Join(base, path)
+	// path 是「文件名前缀」而非目录：尾分隔符参与前缀语义
+	// （如默认 "./logs/" 产出 logs/ 目录内的 "-<level>.log"）。
+	// filepath.Join 会吞掉尾分隔符，这里补回，锚定不得改变目录结构。
+	if strings.HasSuffix(path, "/") || strings.HasSuffix(path, string(os.PathSeparator)) {
+		joined += string(os.PathSeparator)
+	}
+
+	return joined
 }
 
 func buildFileWriter(cfg *Config) (zapcore.WriteSyncer, []io.Closer, error) {
@@ -317,8 +371,13 @@ func buildCore(cfg *Config, lvl zap.AtomicLevel) (zapcore.Core, []io.Closer, err
 		closers []io.Closer
 	)
 
+	consoleWS := cfg.consoleWriter
+	if consoleWS == nil {
+		consoleWS = zapcore.Lock(os.Stdout)
+	}
+
 	if cfg.consoleStdout {
-		writers = append(writers, zapcore.Lock(os.Stdout))
+		writers = append(writers, consoleWS)
 	}
 
 	if cfg.fileStdout {
@@ -331,7 +390,7 @@ func buildCore(cfg *Config, lvl zap.AtomicLevel) (zapcore.Core, []io.Closer, err
 	}
 
 	if len(writers) == 0 {
-		writers = append(writers, zapcore.Lock(os.Stdout))
+		writers = append(writers, consoleWS)
 	}
 
 	core := zapcore.NewCore(

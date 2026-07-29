@@ -2,6 +2,7 @@ package logger_test
 
 import (
 	"errors"
+	"path/filepath"
 	"testing"
 
 	"go.uber.org/zap"
@@ -11,7 +12,7 @@ import (
 
 func TestNew(t *testing.T) {
 	log, err := logger.New(
-		logger.WithPath("./testlogs/app"),
+		logger.WithPath(filepath.Join(t.TempDir(), "logs", "app")),
 		logger.WithLevel("info"),
 		logger.WithOutJSON(true),
 		logger.WithConsole(true),
@@ -76,12 +77,12 @@ func TestNamed(_ *testing.T) {
 	authLog.Info("user logged in", zap.String("user", "alice"))
 }
 
-func TestDailyDivision(_ *testing.T) {
+func TestDailyDivision(t *testing.T) {
 	log := logger.MustNew(
 		logger.WithDivision("daily"),
 		logger.WithConsole(true),
 		logger.WithFile(true),
-		logger.WithPath("./testlogs/daily"),
+		logger.WithPath(filepath.Join(t.TempDir(), "logs", "daily")),
 	)
 	defer log.Sync()
 
@@ -141,12 +142,12 @@ func TestNewInvalidOptions(t *testing.T) {
 		{"empty path", logger.WithPath("")},
 		{"negative maxAge", logger.WithMaxAge(-1)},
 		{"negative maxBackups", logger.WithMaxBackups(-1)},
-		{"zero maxSize", logger.WithMaxSize(0)},
+		{"negative maxSize", logger.WithMaxSize(-1)},
 		{"invalid level", logger.WithLevel("trace")},
 		{
 			"channel duplicates default path",
 			logger.WithChannel("order",
-				logger.WithChannelPath("./testlogs/app"),
+				logger.WithChannelPath("dup/app"),
 				logger.WithChannelDuplicateToDefault(true),
 			),
 		},
@@ -156,7 +157,7 @@ func TestNewInvalidOptions(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			opts := []logger.Option{tt.opt}
 			if tt.name == "channel duplicates default path" {
-				opts = append([]logger.Option{logger.WithPath("./testlogs/app")}, opts...)
+				opts = append([]logger.Option{logger.WithPath("dup/app")}, opts...)
 			}
 
 			_, err := logger.New(opts...)

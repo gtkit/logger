@@ -11,6 +11,30 @@
 
 ---
 
+## logger v2.3.0 — 2026-07-29
+
+### Removed
+
+- **删除 slog 桥接**（`Logger.SlogHandler` 及 `zapSlogHandler` 实现与全部配套测试）：不再提供 log/slog 兼容层。按严格 SemVer 属破坏性变更；因本库当前仅维护者自用、无外部消费方，经所有者决策随本次 minor 发布移除，不另开 /v3
+
+### Added
+
+- **进程默认实例与包级转发函数**（log/slog 同款形态）：`SetDefault(l)` 显式设定默认实例（不关闭被替换的旧实例，生命周期归调用方）、`Default()` 读取。包级函数精确清单：`Debug/Info/Warn/Error/DPanic/Panic/Fatal` 及 `f` 变体，`Debugw/Infow/Warnw/Errorw`，`DebugCtx/InfoCtx/WarnCtx/ErrorCtx` 及 `w` 变体，`LogIf/WarnIf/LogIfCtx/WarnIfCtx`，`HInfo/HInfof/HInfoTo/HInfoTof/HError/HErrorf/HErrorTo/HErrorTof`，`Sync`。caller skip 库内一次性校准，包级函数 caller 指向真实调用行（精确到行号的测试断言）。未 SetDefault 时写入懒创建的纯控制台兜底实例（不落盘、不替换 zap 全局；CAS 竞争安全，可反复重建）
+- `Logger.WithCallerSkip(delta)`：偏移以元数据保存、base 与 channel 共享缓存恒为零偏移 canonical——经 With/Named/Channel（注册与动态两条缓存路径均已覆盖测试）继续派生保留偏移且不污染其他实例；`Zap()/Sugar()` 返回值的 caller 恒指向真实调用点
+- `WithReplaceGlobals(enabled)` Option：控制构建时是否执行 `zap.ReplaceGlobals`，默认 true 与既有行为一致；辅助实例（独立 access 日志、兜底实例）传 false 后无需再用 `Undo()` 撤销全局抢占
+- **requestId 约定内建**：`ContextWithRequestID(ctx, id)` / `RequestIDFromContext(ctx)`（库私有 key，两者对 nil ctx 均宽容不 panic）；所有 `*Ctx` 方法零配置自动合并 `request_id` 字段（有则带、无则略），与 `WithContextFields` 的自定义字段并存合并；同名 `request_id` 去重，优先级：`With` 预绑定 > 调用点字段 > 自定义上下文字段 > 内建（预绑定为作用域身份不可覆盖；同源内部重复亦归一化保留最后一个，链式 With 在构建期归一化、非 Ctx 方法一并受益；覆盖 fields 与 keysAndValues 双形态、全部两两冲突对、多源并存与同源重复组合；调用点/extractor 归一化仅作用于 *Ctx 方法族，避免重复 JSON key）。`*Ctx` 方法在级别关闭时不构造 ctx 字段（热路径零额外分配，附基准）。其他基础设施（如 GORM 日志适配器的 trace 提取）可复用 `RequestIDFromContext` 统一 **id 值**——注意字段名不同：logger 为 request_id、ormx/zlogger 为 trace_id
+- `WithBasePath(base)` Option：相对日志路径（含 channel 路径）构建时锚定到 base 下，绝对路径原样；base 必须为绝对路径（否则报错），锚定保留尾斜杠前缀语义（默认路径 `./logs/` 锚定后仍是 `logs/` 目录而非 `logs-` 文件名前缀）；避免日志落盘位置依赖进程 cwd
+
+### Changed
+
+- **Option 零值容忍（仅限无文件系统副作用项）**：`WithLevel("")`、`WithMaxSize(0)` 由报错改为「零值 = 未配置，使用默认值」；`WithPath("")` **维持报错**——path 决定落盘位置，静默回退相对默认路径会把日志刷进进程 cwd。非零非法输入照旧报错
+- **兜底实例控制台输出改走 stderr**：未 SetDefault 时包级函数写入的兜底日志属诊断输出，不再污染 CLI 的 stdout 协议/管道输出
+- **v2/Makefile 发布守卫**：`make tag` 前置检查工作区干净、`go mod tidy -diff`、vet/lint/race、govulncheck/gosec、覆盖率 ≥80%、benchmark（-benchmem -count=3）、CHANGELOG 含目标版本段；`BUMP=patch|minor` 显式选择语义级别（major 走 /v3 流程不由脚本承载）；tag 说明改用简体中文
+- **全局 owner 契约**：进程内只允许一个实例安装 zap 全局（owner），其余实例必须 `WithReplaceGlobals(false)`；多 owner 先后安装、乱序关闭属未定义行为。`Undo`/`Sync` 的条件化恢复（全局已被替换则跳过）仅为该误用最常见形态的缓解层，不构成热替换安全承诺
+- `ContextFieldsFunc` GoDoc 明确实现必须并发安全；测试产物全部迁入 t.TempDir()，源码树不再残留 testlogs/
+
+---
+
 ## logger v1.8.4 / v2.2.4 — 2026-07-27
 
 ### Changed

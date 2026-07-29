@@ -5,18 +5,52 @@ import (
 	"strings"
 
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 // Zap 返回底层 *zap.Logger 供调用方直接使用或交给第三方库。
-// 返回的 logger 已抵消内部包装层的 caller skip，直接调用时 caller 指向真实调用点。
+// 返回的 logger 已抵消内部包装层与 WithCallerSkip 的全部偏移，
+// 直接调用时 caller 恒指向真实调用点。
 func (l *Logger) Zap() *zap.Logger {
-	return l.zap.WithOptions(zap.AddCallerSkip(-1))
+	return l.zap.WithOptions(zap.AddCallerSkip(-1 - l.callerSkip))
 }
 
 // Sugar 返回底层 *zap.SugaredLogger 供调用方直接使用。
-// 返回的 logger 已抵消内部包装层的 caller skip，直接调用时 caller 指向真实调用点。
+// 返回的 logger 已抵消内部包装层与 WithCallerSkip 的全部偏移，
+// 直接调用时 caller 恒指向真实调用点。
 func (l *Logger) Sugar() *zap.SugaredLogger {
-	return l.zap.WithOptions(zap.AddCallerSkip(-1)).Sugar()
+	return l.zap.WithOptions(zap.AddCallerSkip(-1 - l.callerSkip)).Sugar()
+}
+
+// WithCallerSkip 返回 caller skip 增加 delta 的派生 Logger，原实例不受影响。
+// 供在本库外再包一层转发的 facade 使用：每包一层转发函数，skip +1，
+// 使日志 caller 指向 facade 的调用方而非 facade 本身。
+//
+// 偏移以元数据形式保存：经 With/Named/Channel（含注册与动态 channel）继续派生
+// 均保留偏移，且共享的 channel 缓存永远只存零偏移的 canonical 实例，
+// 不会被任何调用方的偏移污染；Zap()/Sugar() 返回值的 caller 恒指向真实调用点。
+func (l *Logger) WithCallerSkip(delta int) *Logger {
+	if delta == 0 {
+		return l
+	}
+
+	// l.zap 当前视图 = canonical(decorated) + l.callerSkip，叠加 delta 即为新视图；
+	// base 恒为 canonical，不携带任何偏移。
+	z := l.zap.WithOptions(zap.AddCallerSkip(delta))
+
+	return &Logger{
+		base:           l.base,
+		zap:            z,
+		sugar:          z.Sugar(),
+		state:          l.state,
+		messager:       l.messager,
+		contextFields:  l.contextFields,
+		channel:        l.channel,
+		name:           l.name,
+		fields:         copyFields(l.fields),
+		callerSkip:     l.callerSkip + delta,
+		boundRequestID: l.boundRequestID,
+	}
 }
 
 // With 返回附加了预绑定字段的新 Logger，原实例不受影响。
@@ -39,7 +73,12 @@ func (l *Logger) Channel(name string) *Logger {
 	}
 
 	if cached := l.cachedRootChannel(trimmed); cached != nil {
-		return cached
+		// 缓存里是 canonical（零偏移）实例；本实例带偏移时在其上重新应用，
+		// 缓存本身永不携带调用方偏移。
+		if l.callerSkip == 0 {
+			return cached
+		}
+		return cached.WithCallerSkip(l.callerSkip)
 	}
 
 	return l.rebuild(l.rootLogger(), l.name, trimmed, l.fields)
@@ -70,14 +109,21 @@ func (l *Logger) GetLevel() string {
 	return "info"
 }
 
-// Undo 恢复 New 之前的 zap 全局 logger（zap.L()/zap.S()），幂等。
+// Undo 恢复 New 之前的 zap 全局 logger（zap.L()/zap.S()），幂等；
+// 以 WithReplaceGlobals(false) 构建的实例调用为安全 no-op。
+//
+// 契约：进程内只应有一个实例以默认方式（安装全局）构建（owner），其余实例
+// 必须 WithReplaceGlobals(false)。多 owner 先后安装、乱序关闭属未定义行为——
+// undo 链会恢复过期甚至已关闭的实例。「全局已被后来者替换则跳过恢复」的
+// 指针判断仅是对该误用最常见形态的缓解，不构成热替换安全承诺。
 func (l *Logger) Undo() {
 	if l.state != nil {
 		l.state.Undo()
 	}
 }
 
-// Sync 恢复 zap 全局 logger、flush 缓冲日志并关闭文件等资源，幂等。
+// Sync flush 缓冲日志并关闭文件等资源，幂等；若构建时安装过 zap 全局
+// （默认行为，见 WithReplaceGlobals）则按 Undo 的契约与缓解语义处理全局恢复。
 // 调用后本 Logger 及其派生实例不应再用于写日志。
 func (l *Logger) Sync() {
 	if l.state != nil {
@@ -177,29 +223,51 @@ func (l *Logger) Fatalf(format string, args ...any) {
 
 // DebugCtx 以 Debug 级别记录结构化字段日志，并自动合并 ContextFieldsFunc 从 ctx 提取的字段。
 func (l *Logger) DebugCtx(ctx context.Context, msg string, fields ...zap.Field) {
+	if !l.levelEnabled(zapcore.DebugLevel) {
+		return
+	}
 	l.zap.Debug(msg, l.ctxFields(ctx, fields)...)
 }
 
 // InfoCtx 以 Info 级别记录结构化字段日志，并自动合并 ctx 字段。
 func (l *Logger) InfoCtx(ctx context.Context, msg string, fields ...zap.Field) {
+	if !l.levelEnabled(zapcore.InfoLevel) {
+		return
+	}
 	l.zap.Info(msg, l.ctxFields(ctx, fields)...)
 }
 
 // WarnCtx 以 Warn 级别记录结构化字段日志，并自动合并 ctx 字段。
 func (l *Logger) WarnCtx(ctx context.Context, msg string, fields ...zap.Field) {
+	if !l.levelEnabled(zapcore.WarnLevel) {
+		return
+	}
 	l.zap.Warn(msg, l.ctxFields(ctx, fields)...)
 }
 
 // ErrorCtx 以 Error 级别记录结构化字段日志，并自动合并 ctx 字段。
 func (l *Logger) ErrorCtx(ctx context.Context, msg string, fields ...zap.Field) {
+	if !l.levelEnabled(zapcore.ErrorLevel) {
+		return
+	}
 	l.zap.Error(msg, l.ctxFields(ctx, fields)...)
 }
 
+// levelEnabled 供 *Ctx 方法在提取 ctx 字段前做级别短路：
+// 级别关闭时直接返回，避免为注定丢弃的日志构造字段（热路径零额外分配）。
+func (l *Logger) levelEnabled(lvl zapcore.Level) bool {
+	return l.zap.Core().Enabled(lvl)
+}
+
 func (l *Logger) ctxFields(ctx context.Context, fields []zap.Field) []zap.Field {
-	if l.contextFields == nil {
-		return fields
+	// request_id 四级优先级：With 预绑定 > 调用点 > 自定义 ctx 字段 > 内建。
+	// 预绑定已烧进 zap 视图不可移除，故其存在时剔除调用点同名字段并抑制低优先级来源。
+	if l.boundRequestID {
+		fields = filterOutRequestID(fields)
+	} else {
+		fields = normalizeRequestID(fields) // 调用点同源重复保留最后一个
 	}
-	extracted := l.contextFields(ctx)
+	extracted := l.extractCtxFields(ctx, l.boundRequestID || hasRequestIDField(fields))
 	if len(extracted) == 0 {
 		return fields
 	}
@@ -212,10 +280,13 @@ func (l *Logger) ctxFields(ctx context.Context, fields []zap.Field) []zap.Field 
 // ctxKeysAndValues 把 contextFields 提取的 zap.Field 前置到 Sugar 风格的 keysAndValues。
 // Sugar 的 *w 系列方法识别 zap.Field 类型，因此以原 Field 形式注入即可。
 func (l *Logger) ctxKeysAndValues(ctx context.Context, kv []any) []any {
-	if l.contextFields == nil {
-		return kv
+	// 与 ctxFields 相同的四级优先级；kv 形态下剔除「字符串 key+值」与内联 Field 两种同名项。
+	if l.boundRequestID {
+		kv = filterOutRequestIDKV(kv)
+	} else {
+		kv = normalizeRequestIDKV(kv) // 调用点同源重复保留最后一个
 	}
-	extracted := l.contextFields(ctx)
+	extracted := l.extractCtxFields(ctx, l.boundRequestID || hasRequestIDKey(kv))
 	if len(extracted) == 0 {
 		return kv
 	}
@@ -236,24 +307,36 @@ func (l *Logger) ctxKeysAndValues(ctx context.Context, kv []any) []any {
 //
 //	log.DebugwCtx(ctx, "cache miss", "key", "user:42", "tier", "L2")
 func (l *Logger) DebugwCtx(ctx context.Context, msg string, keysAndValues ...any) {
+	if !l.levelEnabled(zapcore.DebugLevel) {
+		return
+	}
 	l.sugar.Debugw(msg, l.ctxKeysAndValues(ctx, keysAndValues)...)
 }
 
 // InfowCtx 以 Info 级别记录 Sugar 风格 key-value 日志，并自动合并 ctx 字段。
 // 行为参见 DebugwCtx。
 func (l *Logger) InfowCtx(ctx context.Context, msg string, keysAndValues ...any) {
+	if !l.levelEnabled(zapcore.InfoLevel) {
+		return
+	}
 	l.sugar.Infow(msg, l.ctxKeysAndValues(ctx, keysAndValues)...)
 }
 
 // WarnwCtx 以 Warn 级别记录 Sugar 风格 key-value 日志，并自动合并 ctx 字段。
 // 行为参见 DebugwCtx。
 func (l *Logger) WarnwCtx(ctx context.Context, msg string, keysAndValues ...any) {
+	if !l.levelEnabled(zapcore.WarnLevel) {
+		return
+	}
 	l.sugar.Warnw(msg, l.ctxKeysAndValues(ctx, keysAndValues)...)
 }
 
 // ErrorwCtx 以 Error 级别记录 Sugar 风格 key-value 日志，并自动合并 ctx 字段。
 // 行为参见 DebugwCtx。
 func (l *Logger) ErrorwCtx(ctx context.Context, msg string, keysAndValues ...any) {
+	if !l.levelEnabled(zapcore.ErrorLevel) {
+		return
+	}
 	l.sugar.Errorw(msg, l.ctxKeysAndValues(ctx, keysAndValues)...)
 }
 
@@ -273,14 +356,14 @@ func (l *Logger) WarnIf(err error) {
 
 // LogIfCtx 在 err != nil 时以 Error 级别记录日志，并合并 ctx 注入的字段。
 func (l *Logger) LogIfCtx(ctx context.Context, err error) {
-	if err != nil {
+	if err != nil && l.levelEnabled(zapcore.ErrorLevel) {
 		l.zap.Error("error occurred", l.ctxFields(ctx, []zap.Field{zap.Error(err)})...)
 	}
 }
 
 // WarnIfCtx 在 err != nil 时以 Warn 级别记录日志，并合并 ctx 注入的字段。
 func (l *Logger) WarnIfCtx(ctx context.Context, err error) {
-	if err != nil {
+	if err != nil && l.levelEnabled(zapcore.WarnLevel) {
 		l.zap.Warn("warning occurred", l.ctxFields(ctx, []zap.Field{zap.Error(err)})...)
 	}
 }
@@ -373,6 +456,11 @@ func (l *Logger) channelRoute(name string) *channelRoute {
 }
 
 func (l *Logger) rebuild(base *zap.Logger, name, channel string, fields []zap.Field) *Logger {
+	// 预绑定字段构建期同源归一化（链式 With 重复 request_id 保留最后一个）——
+	// 字段在此烧进 zap 视图，归一化后所有方法（含非 Ctx）都不会输出重复 key。
+	fields = normalizeRequestID(fields)
+	// z 全程沿 canonical 链路构建（base 与 channel 缓存均为零偏移），
+	// 偏移作为元数据在最后一步统一应用，保证任何派生路径都不污染共享缓存。
 	z := l.baseForChannel(channel)
 	if name != "" {
 		z = z.Named(name)
@@ -380,17 +468,22 @@ func (l *Logger) rebuild(base *zap.Logger, name, channel string, fields []zap.Fi
 	if len(fields) > 0 {
 		z = z.With(fields...)
 	}
+	if l.callerSkip != 0 {
+		z = z.WithOptions(zap.AddCallerSkip(l.callerSkip))
+	}
 
 	return &Logger{
-		base:          base,
-		zap:           z,
-		sugar:         z.Sugar(),
-		state:         l.state,
-		messager:      l.messager,
-		contextFields: l.contextFields,
-		channel:       channel,
-		name:          name,
-		fields:        copyFields(fields),
+		base:           base,
+		zap:            z,
+		sugar:          z.Sugar(),
+		state:          l.state,
+		messager:       l.messager,
+		contextFields:  l.contextFields,
+		channel:        channel,
+		name:           name,
+		fields:         copyFields(fields),
+		callerSkip:     l.callerSkip,
+		boundRequestID: hasRequestIDField(fields),
 	}
 }
 

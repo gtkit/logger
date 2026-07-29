@@ -3,6 +3,7 @@ package logger
 import (
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -45,9 +46,30 @@ func WithDivision(d string) Option {
 func WithPath(p string) Option {
 	return func(c *Config) error {
 		if p == "" {
+			// path 决定落盘位置，必须显式：空值静默回退相对默认路径会把日志
+			// 刷进进程 cwd（零值容忍原则只适用于无文件系统副作用的配置项）。
 			return errors.New("logger: path must not be empty")
 		}
 		c.path = p
+		return nil
+	}
+}
+
+// WithBasePath 设置相对日志路径（含 channel 路径）的锚定根目录：
+// 构建时相对路径一律 Join 到 base 下，绝对路径原样使用；空串为不锚定（默认）。
+// 用途：日志落盘位置不应依赖进程 cwd（如包测试的 cwd 是包目录，会把 logs/
+// 刷进源码树），调用方传入自己的稳定写根（部署根目录、APP_ROOT 等）。
+//
+// 注意：本 option 仅做相对路径的解析锚定，不是安全隔离边界——
+// 不校验 "../" 逃逸，也不拦截绝对路径。需要强制「日志必须落在某根目录下」
+// 的边界约束时，应在应用配置层校验（如 gin-api 的 validateLogPathLocation）。
+func WithBasePath(base string) Option {
+	return func(c *Config) error {
+		if base != "" && !filepath.IsAbs(base) {
+			// 相对 base 仍随进程 cwd 漂移，违背「日志位置不依赖 cwd」的目标
+			return fmt.Errorf("logger: basePath must be absolute, got %q", base)
+		}
+		c.basePath = base
 		return nil
 	}
 }
@@ -104,7 +126,11 @@ func WithMaxBackups(n int) Option {
 // WithMaxSize 设置单个日志文件的最大体积（MB），默认 512。
 func WithMaxSize(mb int) Option {
 	return func(c *Config) error {
-		if mb <= 0 {
+		if mb == 0 {
+			// 零值视为未配置，保留默认值
+			return nil
+		}
+		if mb < 0 {
 			return fmt.Errorf("logger: maxSize must be > 0, got %d", mb)
 		}
 		c.maxSize = mb
@@ -115,6 +141,10 @@ func WithMaxSize(mb int) Option {
 // WithLevel 设置日志级别，支持 debug/info/warn/error/dpanic/panic/fatal，默认 "info"。
 func WithLevel(l string) Option {
 	return func(c *Config) error {
+		if l == "" {
+			// 零值视为未配置，保留默认级别
+			return nil
+		}
 		if _, ok := levelMap[l]; !ok {
 			return fmt.Errorf("logger: invalid level %q", l)
 		}
@@ -157,6 +187,16 @@ func WithContextFields(fn ContextFieldsFunc) Option {
 func WithBuffered(enabled bool) Option {
 	return func(c *Config) error {
 		c.buffered = enabled
+		return nil
+	}
+}
+
+// WithReplaceGlobals 控制构建时是否把该实例安装为 zap 全局 logger（zap.ReplaceGlobals），
+// 默认 true（与既有行为一致）。进程内的辅助实例（如独立的 access 日志实例、
+// 懒创建的兜底实例）应传 false，避免抢占全局后再靠 Undo 撤销。
+func WithReplaceGlobals(enabled bool) Option {
+	return func(c *Config) error {
+		c.replaceGlobals = enabled
 		return nil
 	}
 }

@@ -60,6 +60,37 @@ func main() {
 }
 ```
 
+## 默认实例与包级函数
+
+进程内单主日志的推荐形态（`log/slog` 同款）：构建实例后 `SetDefault`，其余调用点直接用包级函数，caller 指向真实调用行。
+
+```go
+func main() {
+	logger.SetDefault(logger.MustNew(
+		logger.WithPath("./logs/app"),
+		logger.WithLevel("info"),
+	))
+	defer logger.Sync()
+
+	ctx := logger.ContextWithRequestID(context.Background(), "req-1")
+
+	logger.Info("request processed", zap.Int("status", 200))
+	logger.Errorf("connect failed: %v", context.DeadlineExceeded)
+	logger.InfoCtx(ctx, "order created") // 自动携带 request_id，并合并 WithContextFields 字段
+}
+```
+
+行为约定：
+
+- 默认实例只能经 `SetDefault` **显式**设定（nil 被忽略），并发安全；
+- 未设定时包级函数写入懒创建的**纯控制台兜底实例**——不落盘（避免以进程 cwd 为锚在任意目录刷出日志文件）、不替换 zap 全局；
+- 多实例场景不受影响：辅助实例（如独立的 access 日志实例）建议用 `WithReplaceGlobals(false)` 构建，避免抢占 zap 全局后再靠 `Undo()` 撤销；
+- 进阶能力（`Channel`/`With`/`Zap()`/`SetLevel` 等）经 `logger.Default()` 或自行持有的实例使用；
+- **全局 owner 契约**：进程内只应有**一个**实例以默认方式（安装 zap 全局）构建，其余实例一律 `WithReplaceGlobals(false)`。推荐生命周期：启动时构建 owner 并 `SetDefault` 一次 + `defer logger.Sync()`。**不支持运行期热替换**；多 owner 先后安装、乱序关闭属未定义行为（undo 链会恢复过期甚至已关闭的实例）。库侧的条件化 `Undo`（全局已被替换则跳过恢复）仅是对该误用最常见形态的缓解，不是热替换安全承诺。确需多实例轮换：全部 `WithReplaceGlobals(false)`，由应用层自行管理 zap 全局。
+- 兜底实例的控制台输出走 **stderr**，不会污染 CLI 的 stdout 协议/管道输出。
+- 自建 facade 再包一层转发时，用 `Logger.WithCallerSkip(1)` 派生实例校准 caller；偏移以元数据保存，经 `With`/`Named`/`Channel`（含注册与动态）继续派生均保留，共享的 channel 缓存永远只存零偏移实例，`Zap()`/`Sugar()` 返回值的 caller 恒指向真实调用点。
+- 包级函数导出面（精确清单）：`Debug/Info/Warn/Error/DPanic/Panic/Fatal` 及其 `f` 变体；`Debugw/Infow/Warnw/Errorw`；`DebugCtx/InfoCtx/WarnCtx/ErrorCtx` 及其 `w` 变体；`LogIf/WarnIf/LogIfCtx/WarnIfCtx`；`HInfo/HInfof/HInfoTo/HInfoTof/HError/HErrorf/HErrorTo/HErrorTof`；`Sync`。`DPanicw/Panicw/Fatalw` 实例方法不存在，故无对应包级函数；`SetDefault` 不会关闭被替换的旧实例，其生命周期由调用方管理。
+
 ## 基本行为
 
 - `log.Info(...)` 只写默认日志输出。
@@ -148,6 +179,8 @@ logger.WithChannel("audit",
 | `WithSampling(first, thereafter)` | 启用采样：每 1s 窗口内同 level+message 先放行 `first` 条，之后每 `thereafter` 条放行一条 | 关闭 |
 | `WithRedactKeys(keys...)` | 对命中的结构化字段名脱敏，值替换为 `[REDACTED]` | 无 |
 | `WithChannel(name, ...opts)` | 注册独立 channel 文件路由 | 无 |
+| `WithBasePath(base)` | 相对日志路径（含 channel 路径）的锚定根目录；绝对路径原样 | 空（不锚定） |
+| `WithReplaceGlobals(b)` | 构建时是否安装为 zap 全局 logger（`zap.L()/zap.S()`） | `true` |
 
 ### ChannelOption
 
@@ -311,27 +344,6 @@ log := logger.MustNew(
 
 未配置 `WithMessager` 时，`H` 方法等价于普通方法（推送部分静默跳过）。
 
-## slog 桥接
-
-将 Go 标准库 `log/slog` 的日志统一写入 zap，适用于第三方库使用 slog 输出日志的场景：
-
-```go
-import "log/slog"
-
-slog.SetDefault(slog.New(log.SlogHandler()))
-
-// 之后所有 slog 调用都会写入 zap 管道
-slog.Info("third-party log", "key", "value")
-
-// 支持 slog.Group 嵌套结构
-slog.Info("request",
-	slog.Group("request",
-		slog.String("method", "POST"),
-		slog.Int("status", 201),
-	),
-)
-```
-
 ## 丢弃消息监控
 
 当异步 Messager 队列满时，推送会被静默丢弃。可通过 `DroppedMessages()` 监控丢弃量：
@@ -390,6 +402,8 @@ log.Channel("order").Infow("created", "order_id", "A100")
 
 默认使用 `WriteSyncer`（同步写入），可通过 `WithBuffered(true)` 切换为 `BufferedWriteSyncer`（缓冲写入）。两者的核心区别在于日志数据从用户调用到真正落盘之间的路径不同。
 
+> **持久化边界（best-effort）**：`Sync()` 会 flush 缓冲并调用底层 fsync/close，但失败只输出到 stderr、调用方无法拿到 error——本库不提供事务级持久化保证。审计、计费、交易凭证等不允许丢失的数据，请使用数据库/可靠消息等事务性存储，不要把日志文件当作可靠存储。
+
 ### 内部原理
 
 **WriteSyncer（同步写入）：**
@@ -421,7 +435,7 @@ log.Info("msg") → zap 编码 → BufferedWriteSyncer.Write() → 内存缓冲�
 | **写入延迟** | 无——调用返回即已写入内核缓冲区 | 有——取决于缓冲区大小和刷写间隔（默认最多 30 秒） |
 | **写入性能** | 高频写入时 I/O 开销大 | 高吞吐场景性能提升约 3-4 倍 |
 | **内存占用** | 无额外内存 | 额外占用缓冲区大小的内存（默认 256KB） |
-| **正常退出** | `Sync()` 调用 `os.File.Sync()`，数据已在磁盘 | `Sync()` 先 flush 缓冲区再 sync，数据落盘，**不丢日志** |
+| **正常退出** | `Sync()` 调用 `os.File.Sync()`，尽力落盘 | `Sync()` 先 flush 缓冲区再 sync，尽力落盘 |
 | **异常退出** | 已写入内核缓冲区的数据通常不丢 | 用户态缓冲区中未 flush 的数据**会丢失** |
 | **丢失窗口** | 几乎为零 | 最多丢失 1 个缓冲区周期的日志（默认最多 30 秒或 256KB） |
 | **线程安全** | 由底层 logrotate 的 mutex 保证 | BufferedWriteSyncer 自带 mutex，再调用底层 writer |
@@ -431,7 +445,7 @@ log.Info("msg") → zap 编码 → BufferedWriteSyncer.Write() → 内存缓冲�
 
 | 退出方式 | WriteSyncer | BufferedWriteSyncer |
 | --- | --- | --- |
-| `Sync()` 后正常退出 | 不丢 | 不丢（Sync 会 flush 缓冲区） |
+| `Sync()` 后正常退出 | 尽力不丢（best-effort） | 尽力不丢（Sync 会 flush 缓冲区，best-effort） |
 | `os.Exit(0)` 未调 `Sync()` | 不丢（已在内核缓冲区） | **可能丢**（用户态缓冲区未 flush） |
 | `kill -15`（SIGTERM）+ 信号处理调 `Sync()` | 不丢 | 不丢 |
 | `kill -9`（SIGKILL） | 不丢（已在内核缓冲区） | **丢失缓冲区中的数据** |
@@ -452,7 +466,7 @@ defer log.Sync()
 
 **优点：**
 - 每条日志写入后立即进入内核缓冲区，数据安全性高
-- 进程崩溃、被 kill、OOM 等异常退出几乎不丢日志
+- 进程崩溃、被 kill、OOM 等异常退出几乎不丢日志（数据已交内核缓冲；机器断电/内核崩溃仍可能丢失未刷盘部分）
 - 零额外内存开销
 - 行为直观，适合绝大多数业务场景
 
@@ -556,3 +570,28 @@ go test -run ^$ -bench "Benchmark(Info|Channel)" -benchmem
 ## License
 
 Apache-2.0. See [../LICENSE](../LICENSE).
+
+## requestId 贯穿（内建约定）
+
+HTTP 中间件把 requestId 写入 context，所有 `*Ctx` 方法零配置自动合并 `request_id` 字段：
+
+```go
+// 中间件侧
+ctx := logger.ContextWithRequestID(r.Context(), requestID)
+
+// 任意层
+logger.InfoCtx(ctx, "order created")        // 自动携带 request_id
+logger.ErrorwCtx(ctx, "failed", "k", "v")
+
+// 其他基础设施复用同一约定（如 GORM 日志适配器）
+zlogger.WithTraceIDExtractor(logger.RequestIDFromContext)
+```
+
+自定义字段仍走 `WithContextFields`，与内建 request_id 并存合并。同名 `request_id` 只保留一个，优先级：**`With` 预绑定 > 调用点字段 > 自定义上下文字段 > 内建 RequestID**（避免同一条 JSON 出现重复 key）。`With` 预绑定的 request_id 是作用域身份、不可被调用点覆盖；**同源内部重复同样归一化，保留最后一个**（链式 `With` 的归一化发生在构建期，非 Ctx 方法一并受益；调用点/extractor 的归一化仅覆盖 `*Ctx` 方法族，非 Ctx 方法的调用点重复为裸 zap 语义）。
+
+注意字段名：logger 侧输出 `request_id`；ormx/zlogger 侧输出 `trace_id`——**统一的是 id 值，不是检索字段名**，日志平台做关联查询时需对两个字段名做别名或分别检索。`*Ctx` 方法在级别关闭时不构造 ctx 字段（零额外分配）。
+
+## 路径锚定与零值容忍
+
+- `WithBasePath(base)`：相对日志路径（含 channel 路径）锚定到 base 下，绝对路径原样；**base 必须为绝对路径**（相对 base 仍随 cwd 漂移，option 校验拒绝），锚定保留尾斜杠语义（`logs/` 仍产出 `logs/` 目录内的文件，不会坍缩成 `logs-` 前缀）。**它只做相对路径解析锚定，不是安全隔离边界**：不校验 `../` 逃逸、不拦截绝对路径；需要强制"日志必须落在某根目录下"时在应用配置层校验。
+- 零值 = 未配置（**仅限无文件系统副作用的配置项**）：`WithLevel("")` / `WithMaxSize(0)` 使用默认值而不报错，可无条件透传；`WithPath("")` **报错**——path 决定落盘位置，静默回退相对默认路径会把日志刷进进程 cwd；非零非法输入（拼错的级别、负数）照旧报错。
