@@ -11,7 +11,7 @@
 
 ---
 
-## logger v1.9.0 / v2.4.0 — 未发布
+## logger v1.9.0 / v2.4.0 — 2026-09-29
 
 > ⚠ 破坏性变更（fail-closed）：输出全关时 `New` 报错；`SetLevel` 返回 `error`。迁移说明见下方 Changed 条目。
 
