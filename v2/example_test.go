@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	logger "github.com/gtkit/logger/v2"
 	"go.uber.org/zap"
@@ -169,4 +170,59 @@ func ExampleWithBasePath() {
 	fmt.Println(strings.Contains(string(data), "anchored"))
 	// Output:
 	// true
+}
+
+// ExampleWithStacktraceLevel 把 stacktrace 门槛提到 dpanic：高频 Error 日志不再采栈。
+func ExampleWithStacktraceLevel() {
+	dir, _ := os.MkdirTemp("", "logger-example")
+	defer os.RemoveAll(dir)
+
+	l := logger.MustNew(
+		logger.WithPath(filepath.Join(dir, "app")),
+		logger.WithStacktraceLevel("dpanic"),
+	)
+	defer l.Sync()
+
+	l.Error("upstream timeout", zap.String("upstream", "payment"))
+	fmt.Println("ok")
+	// Output: ok
+}
+
+// ExampleWithMessagerDrainTimeout 限定 Sync 等待推送队列排空的上限，外部推送挂起时进程退出不被拖住。
+func ExampleWithMessagerDrainTimeout() {
+	dir, _ := os.MkdirTemp("", "logger-example")
+	defer os.RemoveAll(dir)
+
+	l := logger.MustNew(
+		logger.WithPath(filepath.Join(dir, "app")),
+		logger.WithMessager(printMessager{}),
+		logger.WithMessagerDrainTimeout(2*time.Second),
+	)
+
+	l.HError("payment failed")
+	l.Sync() // 排空推送队列后返回，最多等 2 秒
+	fmt.Println("dropped:", l.DroppedMessages())
+	// Output:
+	// push: payment failed
+	// dropped: 0
+}
+
+type printMessager struct{}
+
+func (printMessager) Send(msg string)      { fmt.Println("push:", msg) }
+func (printMessager) SendTo(_, msg string) { fmt.Println("push:", msg) }
+
+// ExampleLogger_SetLevel_invalid 未知级别返回错误，当前级别保持不变。
+func ExampleLogger_SetLevel_invalid() {
+	dir, _ := os.MkdirTemp("", "logger-example")
+	defer os.RemoveAll(dir)
+
+	l := logger.MustNew(logger.WithPath(filepath.Join(dir, "app")))
+	defer l.Sync()
+
+	fmt.Println(l.SetLevel("verbose"))
+	fmt.Println(l.GetLevel())
+	// Output:
+	// logger: invalid level "verbose"
+	// info
 }

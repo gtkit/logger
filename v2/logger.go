@@ -1,6 +1,7 @@
 package logger
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -44,10 +45,6 @@ type lifecycleState struct {
 }
 
 func (s *lifecycleState) Undo() {
-	if s == nil {
-		return
-	}
-
 	s.undoOnce.Do(func() {
 		if s.undo == nil {
 			return
@@ -61,20 +58,14 @@ func (s *lifecycleState) Undo() {
 }
 
 func (s *lifecycleState) Sync() {
-	if s == nil {
-		return
-	}
-
 	s.closeOnce.Do(func() {
 		s.Undo()
 		if s.asyncMsg != nil {
 			s.asyncMsg.close()
 		}
-		if s.root != nil {
-			// console(终端/管道)的 fsync 失败是平台噪音,静默;文件输出的真实失败照常告警。
-			if err := s.root.Sync(); err != nil && !isBenignSyncError(err) {
-				fmt.Fprintf(os.Stderr, "logger: sync root logger: %v\n", err)
-			}
+		// console(终端/管道)的 fsync 失败是平台噪音,静默;文件输出的真实失败照常告警。
+		if err := s.root.Sync(); err != nil && !isBenignSyncError(err) {
+			fmt.Fprintf(os.Stderr, "logger: sync root logger: %v\n", err)
 		}
 		closeClosers(s.closers)
 	})
@@ -110,7 +101,7 @@ func New(opts ...Option) (*Logger, error) {
 	cfg := defaultConfig()
 	for _, opt := range opts {
 		if err := opt(cfg); err != nil {
-			return nil, fmt.Errorf("logger: apply option: %w", err)
+			return nil, err
 		}
 	}
 
@@ -128,7 +119,13 @@ func MustNew(opts ...Option) *Logger {
 }
 
 func build(cfg *Config) (*Logger, error) {
+	if !cfg.consoleStdout && !cfg.fileStdout {
+		// 曾静默回退 stdout：调用方明确关闭了全部输出却仍有日志刷进 stdout，
+		// 会污染 CLI 协议输出；配置错误应在启动期暴露。
+		return nil, errors.New("logger: no output enabled, set WithConsole(true) or WithFile(true)")
+	}
 	applyBasePath(cfg)
+	cfg.fieldRedactor = newFieldRedactor(cfg.redactKeys)
 
 	built, err := buildLoggerSet(cfg)
 	if err != nil {
@@ -138,7 +135,7 @@ func build(cfg *Config) (*Logger, error) {
 	var msgr Messager
 	var asyncMsg *asyncMessager
 	if cfg.messager != nil {
-		asyncMsg = newAsyncMessager(cfg.messager, cfg.messagerQueueSize)
+		asyncMsg = newAsyncMessager(cfg.messager, cfg.messagerQueueSize, cfg.messagerDrainTimeout)
 		msgr = asyncMsg
 	}
 
@@ -353,12 +350,12 @@ func buildLoggerSet(cfg *Config) (*builtLoggerSet, error) {
 			routedCore = zapcore.NewTee(defaultCore, channelCore)
 		}
 		channelRoutes[name] = &channelRoute{
-			logger: newZapLogger(routedCore).With(zap.String("channel", name)),
+			logger: newZapLogger(routedCore, cfg.stacktraceLevel).With(zap.String("channel", name)),
 		}
 	}
 
 	return &builtLoggerSet{
-		root:          newZapLogger(defaultCore),
+		root:          newZapLogger(defaultCore, cfg.stacktraceLevel),
 		closers:       allClosers,
 		atomicLevel:   atomicLevel,
 		channelRoutes: channelRoutes,
@@ -387,10 +384,6 @@ func buildCore(cfg *Config, lvl zap.AtomicLevel) (zapcore.Core, []io.Closer, err
 		}
 		writers = append(writers, ws)
 		closers = append(closers, cl...)
-	}
-
-	if len(writers) == 0 {
-		writers = append(writers, consoleWS)
 	}
 
 	core := zapcore.NewCore(
@@ -428,12 +421,12 @@ func buildChannelCore(root *Config, channel *channelConfig, lvl zap.AtomicLevel)
 	return buildCore(&cfg, lvl)
 }
 
-func newZapLogger(core zapcore.Core) *zap.Logger {
+func newZapLogger(core zapcore.Core, stacktraceLevel zapcore.Level) *zap.Logger {
 	return zap.New(
 		core,
 		zap.AddCaller(),
 		zap.AddCallerSkip(1),
-		zap.AddStacktrace(zap.ErrorLevel),
+		zap.AddStacktrace(stacktraceLevel),
 	)
 }
 
@@ -451,10 +444,14 @@ func closeClosers(closers []io.Closer) {
 //   - channel 与 root 同路径 → 错误（无论 duplicate-to-default 与否，都会引起竞态）
 //   - 两个 channel 同路径 → 错误（rotator 实例间会竞争 rotate）
 //
+// 比较的是最终文件名而非路径前缀：前缀是否带尾分隔符会产出不同文件
+// （"logs/" → logs/-info.log，"logs" → logs-info.log），按前缀 Clean 后比较会误报。
 // 命名按字典序遍历，确保错误信息确定性。
 func validateChannelRoutes(root *Config) error {
-	rootKey := normalizedPathKey(root.path)
-	seen := map[string]string{rootKey: ""}
+	routeKey := func(path string) string {
+		return normalizedPathKey(path + "-" + root.level + ".log")
+	}
+	seen := map[string]string{routeKey(root.path): ""}
 
 	names := make([]string, 0, len(root.channels))
 	for name := range root.channels {
@@ -464,7 +461,7 @@ func validateChannelRoutes(root *Config) error {
 
 	for _, name := range names {
 		ch := root.channels[name]
-		key := normalizedPathKey(ch.path)
+		key := routeKey(ch.path)
 		owner, exists := seen[key]
 		if !exists {
 			seen[key] = name

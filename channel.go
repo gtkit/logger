@@ -3,6 +3,7 @@ package logger
 import (
 	"context"
 	"strings"
+	"sync/atomic"
 
 	"go.uber.org/zap"
 )
@@ -13,6 +14,14 @@ type ChannelLogger struct {
 	channel string
 	name    string
 	fields  []zap.Field
+	// derived 缓存按当前 loggerState 派生出的 zap 视图：Named/With 每次都会克隆 core 并
+	// 预编码字段，热路径不能每条日志重做；state 指针变化（reconfigure/Sync）即失效重建。
+	derived atomic.Pointer[derivedLogger]
+}
+
+type derivedLogger struct {
+	state  *loggerState
+	logger *zap.Logger
 }
 
 // Channel 返回指定名称的 ChannelLogger；名称首尾空白会被去除。
@@ -394,6 +403,10 @@ func (l *ChannelLogger) HErrorTof(url, format string, args ...any) {
 }
 
 func (l *ChannelLogger) derive(state *loggerState) *zap.Logger {
+	if d := l.derived.Load(); d != nil && d.state == state {
+		return d.logger
+	}
+
 	logger := state.channelLogger(l.channel)
 	if l.name != "" {
 		logger = logger.Named(l.name)
@@ -401,6 +414,7 @@ func (l *ChannelLogger) derive(state *loggerState) *zap.Logger {
 	if len(l.fields) > 0 {
 		logger = logger.With(l.fields...)
 	}
+	l.derived.Store(&derivedLogger{state: state, logger: logger})
 
 	return logger
 }

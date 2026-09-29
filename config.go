@@ -2,6 +2,7 @@ package logger
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -28,6 +29,8 @@ const (
 	defaultMaxAge     = 7   // days
 	defaultMaxBackups = 50
 	noSizeRotationMB  = 1 << 30
+
+	defaultMessagerDrainTimeout = 5 * time.Second
 )
 
 type rotationDivision string
@@ -83,7 +86,11 @@ type logConfig struct {
 	flushInterval      time.Duration
 	samplingFirst      int
 	samplingThereafter int
-	fieldRedactor      func([]zapcore.Field) []zapcore.Field
+	redactKeys         map[string]struct{}
+	// fieldRedactor 由 New 从 redactKeys 一次性构造，root 与全部 channel core 共用。
+	fieldRedactor        func([]zapcore.Field) []zapcore.Field
+	messagerDrainTimeout time.Duration
+	stacktraceLevel      zapcore.Level
 }
 
 type channelConfig struct {
@@ -95,26 +102,34 @@ type channelConfig struct {
 // It is safe to call repeatedly.
 func New(opts ...Option) error {
 	cfg := &logConfig{
-		consoleStdout:     false,
-		fileStdout:        true,
-		outJSON:           false,
-		durationEncoder:   zapcore.SecondsDurationEncoder,
-		division:          rotationBoth,
-		path:              defaultPath,
-		compress:          true,
-		maxAge:            defaultMaxAge,
-		maxBackups:        defaultMaxBackups,
-		maxSize:           defaultMaxSize,
-		level:             "info",
-		messagerQueueSize: 1024,
-		channels:          make(map[string]*channelConfig),
+		consoleStdout:        false,
+		fileStdout:           true,
+		outJSON:              false,
+		durationEncoder:      zapcore.SecondsDurationEncoder,
+		division:             rotationBoth,
+		path:                 defaultPath,
+		compress:             true,
+		maxAge:               defaultMaxAge,
+		maxBackups:           defaultMaxBackups,
+		maxSize:              defaultMaxSize,
+		level:                "info",
+		messagerQueueSize:    1024,
+		messagerDrainTimeout: defaultMessagerDrainTimeout,
+		stacktraceLevel:      zapcore.ErrorLevel,
+		channels:             make(map[string]*channelConfig),
 	}
 
 	for _, o := range opts {
 		if err := o(cfg); err != nil {
-			return fmt.Errorf("logger: apply option: %w", err)
+			return err
 		}
 	}
+	if !cfg.consoleStdout && !cfg.fileStdout {
+		// 曾静默回退 stdout：调用方明确关闭了全部输出却仍有日志刷进 stdout，
+		// 会污染 CLI 协议输出；配置错误应在启动期暴露。
+		return errors.New("logger: no output enabled, set WithConsole(true) or WithFile(true)")
+	}
+	cfg.fieldRedactor = newFieldRedactor(cfg.redactKeys)
 
 	state, err := buildLoggerState(cfg)
 	if err != nil {
@@ -279,7 +294,7 @@ func buildLoggerState(cfg *logConfig) (*loggerState, error) {
 	}
 
 	allClosers := append([]io.Closer{}, defaultClosers...)
-	root := newZapLogger(defaultCore)
+	root := newZapLogger(defaultCore, cfg.stacktraceLevel)
 	channelBases := make(map[string]*zap.Logger, len(cfg.channels))
 
 	for name, channelCfg := range cfg.channels {
@@ -296,13 +311,13 @@ func buildLoggerState(cfg *logConfig) (*loggerState, error) {
 			routedCore = zapcore.NewTee(defaultCore, channelCore)
 		}
 
-		channelBases[name] = newZapLogger(routedCore).With(zap.String("channel", name))
+		channelBases[name] = newZapLogger(routedCore, cfg.stacktraceLevel).With(zap.String("channel", name))
 	}
 
 	var msgr Messager
 	var asyncMsg *asyncMessager
 	if cfg.messager != nil {
-		asyncMsg = newAsyncMessager(cfg.messager, cfg.messagerQueueSize)
+		asyncMsg = newAsyncMessager(cfg.messager, cfg.messagerQueueSize, cfg.messagerDrainTimeout)
 		msgr = asyncMsg
 	}
 
@@ -329,10 +344,6 @@ func buildCore(cfg *logConfig, lvl zap.AtomicLevel) (zapcore.Core, []io.Closer, 
 		}
 		writers = append(writers, ws)
 		closers = append(closers, cl...)
-	}
-
-	if len(writers) == 0 {
-		writers = append(writers, zapcore.Lock(os.Stdout))
 	}
 
 	core := zapcore.NewCore(
@@ -370,12 +381,12 @@ func buildChannelCore(root *logConfig, channel *channelConfig, lvl zap.AtomicLev
 	return buildCore(&cfg, lvl)
 }
 
-func newZapLogger(core zapcore.Core) *zap.Logger {
+func newZapLogger(core zapcore.Core, stacktraceLevel zapcore.Level) *zap.Logger {
 	return zap.New(
 		core,
 		zap.AddCaller(),
 		zap.AddCallerSkip(1),
-		zap.AddStacktrace(zap.ErrorLevel),
+		zap.AddStacktrace(stacktraceLevel),
 	)
 }
 
@@ -436,10 +447,14 @@ func closeClosers(closers []io.Closer) {
 //     两个独立 writer 竞争同一文件——两种情况都会引起 rotate/写入竞态）
 //   - 两个 channel 同路径 → 错误（不论是否 duplicate，都会引起 rotator 实例间竞态）
 //
+// 比较的是最终文件名而非路径前缀：前缀是否带尾分隔符会产出不同文件
+// （"logs/" → logs/-info.log，"logs" → logs-info.log），按前缀 Clean 后比较会误报。
 // 命名按字典序遍历，确保错误信息确定性（便于测试与排错）。
 func validateChannelRoutes(root *logConfig) error {
-	rootKey := normalizedPathKey(root.path)
-	seen := map[string]string{rootKey: ""} // pathKey -> channelName (""=root)
+	routeKey := func(path string) string {
+		return normalizedPathKey(path + "-" + root.level + ".log")
+	}
+	seen := map[string]string{routeKey(root.path): ""} // fileKey -> channelName (""=root)
 
 	names := make([]string, 0, len(root.channels))
 	for name := range root.channels {
@@ -449,7 +464,7 @@ func validateChannelRoutes(root *logConfig) error {
 
 	for _, name := range names {
 		ch := root.channels[name]
-		key := normalizedPathKey(ch.path)
+		key := routeKey(ch.path)
 		owner, exists := seen[key]
 		if !exists {
 			seen[key] = name

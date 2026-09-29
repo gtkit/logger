@@ -142,6 +142,35 @@ func WithMessagerQueueSize(size int) Option {
 	}
 }
 
+// WithMessagerDrainTimeout 设置 Sync 排空异步推送队列的最长等待时间，默认 5 秒。
+// 超时后 Sync 不再等待：向 stderr 告警，队列中尚未执行的推送计入 DroppedMessages，
+// 后台推送协程继续消费直到外部 Messager 的调用返回。用于防止外部推送挂起时进程无法退出。
+func WithMessagerDrainTimeout(d time.Duration) Option {
+	return func(c *logConfig) error {
+		if d <= 0 {
+			return fmt.Errorf("logger: messagerDrainTimeout must be > 0, got %v", d)
+		}
+		c.messagerDrainTimeout = d
+		return nil
+	}
+}
+
+// WithStacktraceLevel 设置附带 stacktrace 的最低日志级别，支持 debug/info/warn/error/dpanic/panic/fatal，
+// 默认 "error"；空串视为未配置。高频 Error 日志场景可提升到 "dpanic" 或 "fatal" 以省去采栈开销。
+func WithStacktraceLevel(l string) Option {
+	return func(c *logConfig) error {
+		if l == "" {
+			return nil
+		}
+		lvl, ok := levelMap[l]
+		if !ok {
+			return fmt.Errorf("logger: invalid stacktrace level %q", l)
+		}
+		c.stacktraceLevel = lvl
+		return nil
+	}
+}
+
 // WithContextFields 注册从 context.Context 提取日志字段的函数，供 *Ctx 系列方法自动合并 trace_id 等链路信息。
 func WithContextFields(fn ContextFieldsFunc) Option {
 	return func(c *logConfig) error {
@@ -211,6 +240,7 @@ func WithSampling(first, thereafter int) Option {
 }
 
 // WithRedactKeys 对指定字段名做脱敏：凡 Key 命中的结构化字段，其值统一替换为 "[REDACTED]"。
+// 多次调用取并集（基础敏感集 + 业务追加集可分开传入），空串 key 忽略。
 //
 // 典型用途：屏蔽 password / token / authorization / id_card / phone 等敏感字段，避免落盘合规风险。
 // 匹配区分大小写，按字段 Key 精确匹配。channel 继承相同脱敏规则。
@@ -221,24 +251,20 @@ func WithSampling(first, thereafter int) Option {
 // 这也是推荐用结构化字段而非字符串拼接的又一理由。
 func WithRedactKeys(keys ...string) Option {
 	return func(c *logConfig) error {
-		if redactor := newFieldRedactor(keys); redactor != nil {
-			c.fieldRedactor = redactor
+		for _, k := range keys {
+			if k == "" {
+				continue
+			}
+			if c.redactKeys == nil {
+				c.redactKeys = make(map[string]struct{}, len(keys))
+			}
+			c.redactKeys[k] = struct{}{}
 		}
 		return nil
 	}
 }
 
-func newFieldRedactor(keys []string) func([]zapcore.Field) []zapcore.Field {
-	if len(keys) == 0 {
-		return nil
-	}
-
-	set := make(map[string]struct{}, len(keys))
-	for _, k := range keys {
-		if k != "" {
-			set[k] = struct{}{}
-		}
-	}
+func newFieldRedactor(set map[string]struct{}) func([]zapcore.Field) []zapcore.Field {
 	if len(set) == 0 {
 		return nil
 	}
@@ -291,8 +317,8 @@ func WithChannel(name string, opts ...ChannelOption) Option {
 			return fmt.Errorf("logger: channel %q path must not be empty", trimmed)
 		}
 
-		if c.channels == nil {
-			c.channels = make(map[string]*channelConfig)
+		if _, dup := c.channels[trimmed]; dup {
+			return fmt.Errorf("logger: channel %q registered more than once", trimmed)
 		}
 		c.channels[trimmed] = cfg
 

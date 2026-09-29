@@ -2,6 +2,7 @@ package logger
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"go.uber.org/zap"
@@ -56,12 +57,12 @@ func (l *Logger) WithCallerSkip(delta int) *Logger {
 // With 返回附加了预绑定字段的新 Logger，原实例不受影响。
 func (l *Logger) With(fields ...zap.Field) *Logger {
 	combined := append(copyFields(l.fields), fields...)
-	return l.rebuild(l.rootLogger(), l.name, l.channel, combined)
+	return l.rebuild(l.name, l.channel, combined)
 }
 
 // Named 返回追加了 logger 名称段的新 Logger，名称以 "." 级联。
 func (l *Logger) Named(name string) *Logger {
-	return l.rebuild(l.rootLogger(), joinLoggerName(l.name, name), l.channel, l.fields)
+	return l.rebuild(joinLoggerName(l.name, name), l.channel, l.fields)
 }
 
 // Channel 返回指定名称的 channel Logger；名称首尾空白会被去除，空名返回原实例。
@@ -81,32 +82,32 @@ func (l *Logger) Channel(name string) *Logger {
 		return cached.WithCallerSkip(l.callerSkip)
 	}
 
-	return l.rebuild(l.rootLogger(), l.name, trimmed, l.fields)
+	return l.rebuild(l.name, trimmed, l.fields)
 }
 
-// DroppedMessages 返回异步 Messager 因队列满而丢弃的推送消息数量。
+// DroppedMessages 返回异步 Messager 因队列满或 Sync 排空超时而丢弃的推送消息数量。
 // 如果未配置 Messager，始终返回 0。
 func (l *Logger) DroppedMessages() int64 {
-	if l.state != nil && l.state.asyncMsg != nil {
+	if l.state.asyncMsg != nil {
 		return l.state.asyncMsg.dropped.Load()
 	}
 	return 0
 }
 
 // SetLevel 运行时动态调整日志级别，影响所有 logger（包括 channel）。
-// 支持: debug, info, warn, error, dpanic, panic, fatal.
-func (l *Logger) SetLevel(level string) {
-	if lvl, ok := levelMap[level]; ok && l.state != nil {
-		l.state.atomicLevel.SetLevel(lvl)
+// 支持: debug, info, warn, error, dpanic, panic, fatal；未知级别返回错误且当前级别不变。
+func (l *Logger) SetLevel(level string) error {
+	lvl, ok := levelMap[level]
+	if !ok {
+		return fmt.Errorf("logger: invalid level %q", level)
 	}
+	l.state.atomicLevel.SetLevel(lvl)
+	return nil
 }
 
 // GetLevel 返回当前日志级别字符串。
 func (l *Logger) GetLevel() string {
-	if l.state != nil {
-		return l.state.atomicLevel.Level().String()
-	}
-	return "info"
+	return l.state.atomicLevel.Level().String()
 }
 
 // Undo 恢复 New 之前的 zap 全局 logger（zap.L()/zap.S()），幂等；
@@ -117,53 +118,49 @@ func (l *Logger) GetLevel() string {
 // undo 链会恢复过期甚至已关闭的实例。「全局已被后来者替换则跳过恢复」的
 // 指针判断仅是对该误用最常见形态的缓解，不构成热替换安全承诺。
 func (l *Logger) Undo() {
-	if l.state != nil {
-		l.state.Undo()
-	}
+	l.state.Undo()
 }
 
 // Sync flush 缓冲日志并关闭文件等资源，幂等；若构建时安装过 zap 全局
 // （默认行为，见 WithReplaceGlobals）则按 Undo 的契约与缓解语义处理全局恢复。
 // 调用后本 Logger 及其派生实例不应再用于写日志。
 func (l *Logger) Sync() {
-	if l.state != nil {
-		l.state.Sync()
-	}
+	l.state.Sync()
 }
 
 // Debug 以 Debug 级别记录结构化字段日志。
 func (l *Logger) Debug(msg string, fields ...zap.Field) {
-	l.zap.Debug(msg, fields...)
+	l.zap.Debug(msg, l.recordFields(fields)...)
 }
 
 // Info 以 Info 级别记录结构化字段日志。
 func (l *Logger) Info(msg string, fields ...zap.Field) {
-	l.zap.Info(msg, fields...)
+	l.zap.Info(msg, l.recordFields(fields)...)
 }
 
 // Warn 以 Warn 级别记录结构化字段日志。
 func (l *Logger) Warn(msg string, fields ...zap.Field) {
-	l.zap.Warn(msg, fields...)
+	l.zap.Warn(msg, l.recordFields(fields)...)
 }
 
 // Error 以 Error 级别记录结构化字段日志。
 func (l *Logger) Error(msg string, fields ...zap.Field) {
-	l.zap.Error(msg, fields...)
+	l.zap.Error(msg, l.recordFields(fields)...)
 }
 
 // DPanic 以 DPanic 级别记录结构化字段日志；development 模式下会 panic。
 func (l *Logger) DPanic(msg string, fields ...zap.Field) {
-	l.zap.DPanic(msg, fields...)
+	l.zap.DPanic(msg, l.recordFields(fields)...)
 }
 
 // Panic 以 Panic 级别记录结构化字段日志，随后 panic。
 func (l *Logger) Panic(msg string, fields ...zap.Field) {
-	l.zap.Panic(msg, fields...)
+	l.zap.Panic(msg, l.recordFields(fields)...)
 }
 
 // Fatal 以 Fatal 级别记录结构化字段日志，随后调用 os.Exit(1)。
 func (l *Logger) Fatal(msg string, fields ...zap.Field) {
-	l.zap.Fatal(msg, fields...)
+	l.zap.Fatal(msg, l.recordFields(fields)...)
 }
 
 // Debugf 以 Debug 级别记录 fmt 风格格式化日志。
@@ -178,22 +175,22 @@ func (l *Logger) Infof(format string, args ...any) {
 
 // Debugw 以 Debug 级别记录 Sugar 风格 key-value 日志。
 func (l *Logger) Debugw(msg string, keysAndValues ...any) {
-	l.sugar.Debugw(msg, keysAndValues...)
+	l.sugar.Debugw(msg, l.recordKV(keysAndValues)...)
 }
 
 // Infow 以 Info 级别记录 Sugar 风格 key-value 日志。
 func (l *Logger) Infow(msg string, keysAndValues ...any) {
-	l.sugar.Infow(msg, keysAndValues...)
+	l.sugar.Infow(msg, l.recordKV(keysAndValues)...)
 }
 
 // Warnw 以 Warn 级别记录 Sugar 风格 key-value 日志。
 func (l *Logger) Warnw(msg string, keysAndValues ...any) {
-	l.sugar.Warnw(msg, keysAndValues...)
+	l.sugar.Warnw(msg, l.recordKV(keysAndValues)...)
 }
 
 // Errorw 以 Error 级别记录 Sugar 风格 key-value 日志。
 func (l *Logger) Errorw(msg string, keysAndValues ...any) {
-	l.sugar.Errorw(msg, keysAndValues...)
+	l.sugar.Errorw(msg, l.recordKV(keysAndValues)...)
 }
 
 // Warnf 以 Warn 级别记录 fmt 风格格式化日志。
@@ -259,14 +256,27 @@ func (l *Logger) levelEnabled(lvl zapcore.Level) bool {
 	return l.zap.Core().Enabled(lvl)
 }
 
+// recordFields 对调用点字段做 request_id 去重，所有记录方法共用：
+// With 预绑定已烧进 zap 视图不可移除，其存在时剔除调用点同名字段；
+// 否则同源重复只保留最后一个。至多一个命中时零分配原样返回。
+func (l *Logger) recordFields(fields []zap.Field) []zap.Field {
+	if l.boundRequestID {
+		return filterOutRequestID(fields)
+	}
+	return normalizeRequestID(fields)
+}
+
+// recordKV 是 recordFields 的 Sugar key-value 形态。
+func (l *Logger) recordKV(kv []any) []any {
+	if l.boundRequestID {
+		return filterOutRequestIDKV(kv)
+	}
+	return normalizeRequestIDKV(kv)
+}
+
 func (l *Logger) ctxFields(ctx context.Context, fields []zap.Field) []zap.Field {
 	// request_id 四级优先级：With 预绑定 > 调用点 > 自定义 ctx 字段 > 内建。
-	// 预绑定已烧进 zap 视图不可移除，故其存在时剔除调用点同名字段并抑制低优先级来源。
-	if l.boundRequestID {
-		fields = filterOutRequestID(fields)
-	} else {
-		fields = normalizeRequestID(fields) // 调用点同源重复保留最后一个
-	}
+	fields = l.recordFields(fields)
 	extracted := l.extractCtxFields(ctx, l.boundRequestID || hasRequestIDField(fields))
 	if len(extracted) == 0 {
 		return fields
@@ -281,11 +291,7 @@ func (l *Logger) ctxFields(ctx context.Context, fields []zap.Field) []zap.Field 
 // Sugar 的 *w 系列方法识别 zap.Field 类型，因此以原 Field 形式注入即可。
 func (l *Logger) ctxKeysAndValues(ctx context.Context, kv []any) []any {
 	// 与 ctxFields 相同的四级优先级；kv 形态下剔除「字符串 key+值」与内联 Field 两种同名项。
-	if l.boundRequestID {
-		kv = filterOutRequestIDKV(kv)
-	} else {
-		kv = normalizeRequestIDKV(kv) // 调用点同源重复保留最后一个
-	}
+	kv = l.recordKV(kv)
 	extracted := l.extractCtxFields(ctx, l.boundRequestID || hasRequestIDKey(kv))
 	if len(extracted) == 0 {
 		return kv
@@ -370,6 +376,7 @@ func (l *Logger) WarnIfCtx(ctx context.Context, err error) {
 
 // HInfo 以 Info 级别写日志，并通过 Messager 异步推送消息（未配置 Messager 时仅写日志）。
 func (l *Logger) HInfo(msg string, fields ...zap.Field) {
+	fields = l.recordFields(fields)
 	l.zap.Info(msg, fields...)
 	if l.messager != nil {
 		l.messager.Send(l.formatHookFieldsMsg(msg, withChannelField(l.channel, fields)))
@@ -386,6 +393,7 @@ func (l *Logger) HInfof(format string, args ...any) {
 
 // HInfoTo 以 Info 级别写日志，并通过 Messager 异步推送消息到指定 URL。
 func (l *Logger) HInfoTo(url, msg string, fields ...zap.Field) {
+	fields = l.recordFields(fields)
 	l.zap.Info(msg, fields...)
 	if l.messager != nil {
 		l.messager.SendTo(url, l.formatHookFieldsMsg(msg, withChannelField(l.channel, fields)))
@@ -402,6 +410,7 @@ func (l *Logger) HInfoTof(url, format string, args ...any) {
 
 // HError 以 Error 级别写日志，并通过 Messager 异步推送消息（未配置 Messager 时仅写日志）。
 func (l *Logger) HError(msg string, fields ...zap.Field) {
+	fields = l.recordFields(fields)
 	l.zap.Error(msg, fields...)
 	if l.messager != nil {
 		l.messager.Send(l.formatHookFieldsMsg(msg, withChannelField(l.channel, fields)))
@@ -418,6 +427,7 @@ func (l *Logger) HErrorf(format string, args ...any) {
 
 // HErrorTo 以 Error 级别写日志，并通过 Messager 异步推送消息到指定 URL。
 func (l *Logger) HErrorTo(url, msg string, fields ...zap.Field) {
+	fields = l.recordFields(fields)
 	l.zap.Error(msg, fields...)
 	if l.messager != nil {
 		l.messager.SendTo(url, l.formatHookFieldsMsg(msg, withChannelField(l.channel, fields)))
@@ -433,29 +443,10 @@ func (l *Logger) HErrorTof(url, format string, args ...any) {
 }
 
 func (l *Logger) formatHookFieldsMsg(msg string, fields []zap.Field) string {
-	if l.state == nil {
-		return formatHookFieldsMsg(msg, fields, nil)
-	}
 	return formatHookFieldsMsg(msg, fields, l.state.fieldRedactor)
 }
 
-func (l *Logger) rootLogger() *zap.Logger {
-	if l.base != nil {
-		return l.base
-	}
-
-	return l.zap
-}
-
-func (l *Logger) channelRoute(name string) *channelRoute {
-	if l.state == nil || l.state.channelRoutes == nil {
-		return nil
-	}
-
-	return l.state.channelRoutes[name]
-}
-
-func (l *Logger) rebuild(base *zap.Logger, name, channel string, fields []zap.Field) *Logger {
+func (l *Logger) rebuild(name, channel string, fields []zap.Field) *Logger {
 	// 预绑定字段构建期同源归一化（链式 With 重复 request_id 保留最后一个）——
 	// 字段在此烧进 zap 视图，归一化后所有方法（含非 Ctx）都不会输出重复 key。
 	fields = normalizeRequestID(fields)
@@ -473,7 +464,7 @@ func (l *Logger) rebuild(base *zap.Logger, name, channel string, fields []zap.Fi
 	}
 
 	return &Logger{
-		base:           base,
+		base:           l.base,
 		zap:            z,
 		sugar:          z.Sugar(),
 		state:          l.state,
@@ -489,15 +480,11 @@ func (l *Logger) rebuild(base *zap.Logger, name, channel string, fields []zap.Fi
 
 func (l *Logger) baseForChannel(channel string) *zap.Logger {
 	if channel == "" {
-		return l.rootLogger()
+		return l.base
 	}
 
-	if route := l.channelRoute(channel); route != nil {
+	if route := l.state.channelRoutes[channel]; route != nil {
 		return route.logger
-	}
-
-	if l.state == nil {
-		return l.rootLogger().With(zap.String("channel", channel))
 	}
 
 	if cached, ok := l.state.dynamicChannelBases.Load(channel); ok {
@@ -506,7 +493,7 @@ func (l *Logger) baseForChannel(channel string) *zap.Logger {
 		}
 	}
 
-	logger := l.rootLogger().With(zap.String("channel", channel))
+	logger := l.base.With(zap.String("channel", channel))
 
 	// CAS 预留缓存 slot，确保计数不超过上限。
 	for {
@@ -534,10 +521,6 @@ func (l *Logger) baseForChannel(channel string) *zap.Logger {
 
 func (l *Logger) cachedRootChannel(channel string) *Logger {
 	if !l.isRootContext() {
-		return nil
-	}
-
-	if l.state == nil || l.state.rootChannels == nil {
 		return nil
 	}
 

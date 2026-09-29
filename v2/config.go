@@ -19,6 +19,8 @@ const (
 	defaultMaxAge     = 7   // days
 	defaultMaxBackups = 50
 	noSizeRotationMB  = 1 << 30
+
+	defaultMessagerDrainTimeout = 5 * time.Second
 )
 
 type rotationDivision string
@@ -76,9 +78,13 @@ type Config struct {
 	flushInterval      time.Duration
 	samplingFirst      int
 	samplingThereafter int
-	fieldRedactor      func([]zapcore.Field) []zapcore.Field
-	replaceGlobals     bool
-	basePath           string
+	redactKeys         map[string]struct{}
+	// fieldRedactor 由 build 从 redactKeys 一次性构造，root 与全部 channel core 共用。
+	fieldRedactor        func([]zapcore.Field) []zapcore.Field
+	replaceGlobals       bool
+	basePath             string
+	messagerDrainTimeout time.Duration
+	stacktraceLevel      zapcore.Level
 	// consoleWriter 控制台输出目标；nil 用默认 os.Stdout。
 	// 仅库内部使用（兜底实例走 stderr，避免污染 CLI 的 stdout 协议输出）。
 	consoleWriter zapcore.WriteSyncer
@@ -91,19 +97,21 @@ type channelConfig struct {
 
 func defaultConfig() *Config {
 	return &Config{
-		consoleStdout:     false,
-		fileStdout:        true,
-		outJSON:           false,
-		durationEncoder:   zapcore.SecondsDurationEncoder,
-		division:          rotationBoth,
-		path:              defaultPath,
-		compress:          true,
-		maxAge:            defaultMaxAge,
-		maxBackups:        defaultMaxBackups,
-		maxSize:           defaultMaxSize,
-		level:             "info",
-		messagerQueueSize: 1024,
-		replaceGlobals:    true,
-		channels:          make(map[string]*channelConfig),
+		consoleStdout:        false,
+		fileStdout:           true,
+		outJSON:              false,
+		durationEncoder:      zapcore.SecondsDurationEncoder,
+		division:             rotationBoth,
+		path:                 defaultPath,
+		compress:             true,
+		maxAge:               defaultMaxAge,
+		maxBackups:           defaultMaxBackups,
+		maxSize:              defaultMaxSize,
+		level:                "info",
+		messagerQueueSize:    1024,
+		messagerDrainTimeout: defaultMessagerDrainTimeout,
+		stacktraceLevel:      zapcore.ErrorLevel,
+		replaceGlobals:       true,
+		channels:             make(map[string]*channelConfig),
 	}
 }

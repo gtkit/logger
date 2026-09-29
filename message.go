@@ -6,6 +6,7 @@ import (
 	"os"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -23,20 +24,22 @@ type Messager interface {
 // asyncMessager 将推送操作放入有界队列，由独立 goroutine 执行，避免阻塞日志调用。
 // 队列满时静默丢弃推送（日志本身已写入文件，只丢通知）。
 type asyncMessager struct {
-	inner     Messager
-	queue     chan func()
-	done      chan struct{}
-	mu        sync.RWMutex
-	closeOnce sync.Once
-	closed    bool
-	dropped   atomic.Int64
+	inner        Messager
+	queue        chan func()
+	done         chan struct{}
+	drainTimeout time.Duration
+	mu           sync.RWMutex
+	closeOnce    sync.Once
+	closed       bool
+	dropped      atomic.Int64
 }
 
-func newAsyncMessager(m Messager, size int) *asyncMessager {
+func newAsyncMessager(m Messager, size int, drainTimeout time.Duration) *asyncMessager {
 	am := &asyncMessager{
-		inner: m,
-		queue: make(chan func(), size),
-		done:  make(chan struct{}),
+		inner:        m,
+		queue:        make(chan func(), size),
+		done:         make(chan struct{}),
+		drainTimeout: drainTimeout,
 	}
 	go am.run()
 	return am
@@ -80,13 +83,25 @@ func (am *asyncMessager) enqueue(fn func()) {
 	am.mu.RUnlock()
 }
 
+// close 关闭队列并等待待处理推送完成，最多等 drainTimeout：
+// 外部 Send 挂起（网络黑洞）时不能拖住进程退出，超时后把未执行的推送计入 dropped 并告警，
+// 后台协程继续消费直到外部调用返回。
 func (am *asyncMessager) close() {
 	am.closeOnce.Do(func() {
 		am.mu.Lock()
 		am.closed = true
 		close(am.queue)
 		am.mu.Unlock()
-		<-am.done
+
+		timer := time.NewTimer(am.drainTimeout)
+		defer timer.Stop()
+		select {
+		case <-am.done:
+		case <-timer.C:
+			pending := int64(len(am.queue))
+			am.dropped.Add(pending)
+			fmt.Fprintf(os.Stderr, "logger: messager drain timed out after %v, %d pending push(es) dropped\n", am.drainTimeout, pending)
+		}
 	})
 }
 

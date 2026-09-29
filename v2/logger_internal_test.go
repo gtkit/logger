@@ -64,6 +64,7 @@ func TestSyncIsIdempotentAcrossDerivedLoggers(t *testing.T) {
 	var undoCalls atomic.Int32
 
 	log := &Logger{
+		base:  zap.NewNop(),
 		zap:   zap.NewNop(),
 		sugar: zap.NewNop().Sugar(),
 		state: &lifecycleState{
@@ -91,6 +92,7 @@ func TestSyncIsIdempotentAcrossDerivedLoggers(t *testing.T) {
 func TestHInfoIncludesFieldsInMessager(t *testing.T) {
 	msg := &testMessager{}
 	log := &Logger{
+		base:     zap.NewNop(),
 		zap:      zap.NewNop(),
 		sugar:    zap.NewNop().Sugar(),
 		state:    &lifecycleState{root: zap.NewNop()},
@@ -110,7 +112,7 @@ func TestHInfoIncludesFieldsInMessager(t *testing.T) {
 func TestHInfoMessagerRedactsFields(t *testing.T) {
 	msg := newSyncTestMessager(1)
 	log := MustNew(
-		WithConsole(false),
+		WithConsole(true),
 		WithFile(false),
 		WithMessager(msg),
 		WithRedactKeys("password"),
@@ -376,7 +378,7 @@ func (m *panicMessager) SendTo(url, msg string) {
 
 func TestAsyncMessager_SendDelivered(t *testing.T) {
 	inner := newSyncTestMessager(10)
-	am := newAsyncMessager(inner, 10)
+	am := newAsyncMessager(inner, 10, defaultMessagerDrainTimeout)
 
 	am.Send("hello")
 	am.SendTo("http://example.com", "world")
@@ -403,7 +405,7 @@ func TestAsyncMessager_SendDelivered(t *testing.T) {
 
 func TestAsyncMessager_NonBlocking(t *testing.T) {
 	inner := newSyncTestMessager(10)
-	am := newAsyncMessager(inner, 10)
+	am := newAsyncMessager(inner, 10, defaultMessagerDrainTimeout)
 	defer am.close()
 
 	// Should not block even if inner is slow
@@ -424,7 +426,7 @@ func TestAsyncMessager_NonBlocking(t *testing.T) {
 func TestAsyncMessager_QueueFullDropsSilently(_ *testing.T) {
 	// Use a blocking inner to fill the queue
 	blocker := &blockingMessager{block: make(chan struct{}), started: make(chan struct{})}
-	am := newAsyncMessager(blocker, 2)
+	am := newAsyncMessager(blocker, 2, defaultMessagerDrainTimeout)
 
 	// Fill the queue: first item is being processed (blocked), next 2 fill the buffer
 	am.Send("1")
@@ -462,7 +464,7 @@ func (m *blockingMessager) SendTo(_ string, _ string) {
 
 func TestAsyncMessager_CloseDrainsQueue(t *testing.T) {
 	inner := newSyncTestMessager(10)
-	am := newAsyncMessager(inner, 10)
+	am := newAsyncMessager(inner, 10, defaultMessagerDrainTimeout)
 
 	am.Send("a")
 	am.Send("b")
@@ -477,7 +479,7 @@ func TestAsyncMessager_CloseDrainsQueue(t *testing.T) {
 
 func TestAsyncMessager_SendAfterCloseIsIgnored(_ *testing.T) {
 	inner := newSyncTestMessager(10)
-	am := newAsyncMessager(inner, 10)
+	am := newAsyncMessager(inner, 10, defaultMessagerDrainTimeout)
 
 	am.close()
 	am.Send("after-close")
@@ -487,19 +489,17 @@ func TestAsyncMessager_SendAfterCloseIsIgnored(_ *testing.T) {
 
 func TestAsyncMessager_CloseWhileSendingDoesNotPanic(_ *testing.T) {
 	inner := newSyncTestMessager(1024)
-	am := newAsyncMessager(inner, 128)
+	am := newAsyncMessager(inner, 128, defaultMessagerDrainTimeout)
 	start := make(chan struct{})
 	var wg sync.WaitGroup
 
 	for range 8 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			<-start
 			for range 256 {
 				am.Send("message")
 			}
-		}()
+		})
 	}
 
 	close(start)
@@ -510,7 +510,7 @@ func TestAsyncMessager_CloseWhileSendingDoesNotPanic(_ *testing.T) {
 
 func TestLoggerHookMethodsAfterSyncDoNotPanic(_ *testing.T) {
 	l := MustNew(
-		WithConsole(false),
+		WithConsole(true),
 		WithFile(false),
 		WithMessager(newSyncTestMessager(10)),
 	)
@@ -524,7 +524,7 @@ func TestLoggerHookMethodsAfterSyncDoNotPanic(_ *testing.T) {
 
 func TestAsyncMessager_RecoversPanics(t *testing.T) {
 	inner := newSyncTestMessager(10)
-	am := newAsyncMessager(&panicMessager{inner: inner}, 10)
+	am := newAsyncMessager(&panicMessager{inner: inner}, 10, defaultMessagerDrainTimeout)
 
 	am.Send("panic")
 	am.Send("after-panic")
@@ -556,7 +556,7 @@ func TestAsyncMessager_RecoversPanics(t *testing.T) {
 // ============================================================
 
 func TestZapAndSugar_NonNil(t *testing.T) {
-	l := MustNew(WithConsole(false), WithFile(false))
+	l := MustNew(WithConsole(true), WithFile(false))
 	defer l.Sync()
 
 	if l.Zap() == nil {
@@ -627,6 +627,7 @@ func TestWarnfAndErrorf_WriteToFile(t *testing.T) {
 func TestHInfof_LogsAndCallsMessager(t *testing.T) {
 	msg := &testMessager{}
 	l := &Logger{
+		base:     zap.NewNop(),
 		zap:      zap.NewNop(),
 		sugar:    zap.NewNop().Sugar(),
 		state:    &lifecycleState{root: zap.NewNop()},
@@ -642,6 +643,7 @@ func TestHInfof_LogsAndCallsMessager(t *testing.T) {
 func TestHInfoTo_LogsAndCallsMessager(t *testing.T) {
 	msg := &testMessager{}
 	l := &Logger{
+		base:     zap.NewNop(),
 		zap:      zap.NewNop(),
 		sugar:    zap.NewNop().Sugar(),
 		state:    &lifecycleState{root: zap.NewNop()},
@@ -660,6 +662,7 @@ func TestHInfoTo_LogsAndCallsMessager(t *testing.T) {
 func TestHInfoTof_LogsAndCallsMessager(t *testing.T) {
 	msg := &testMessager{}
 	l := &Logger{
+		base:     zap.NewNop(),
 		zap:      zap.NewNop(),
 		sugar:    zap.NewNop().Sugar(),
 		state:    &lifecycleState{root: zap.NewNop()},
@@ -678,6 +681,7 @@ func TestHInfoTof_LogsAndCallsMessager(t *testing.T) {
 func TestHError_LogsAndCallsMessager(t *testing.T) {
 	msg := &testMessager{}
 	l := &Logger{
+		base:     zap.NewNop(),
 		zap:      zap.NewNop(),
 		sugar:    zap.NewNop().Sugar(),
 		state:    &lifecycleState{root: zap.NewNop()},
@@ -696,6 +700,7 @@ func TestHError_LogsAndCallsMessager(t *testing.T) {
 func TestHErrorf_LogsAndCallsMessager(t *testing.T) {
 	msg := &testMessager{}
 	l := &Logger{
+		base:     zap.NewNop(),
 		zap:      zap.NewNop(),
 		sugar:    zap.NewNop().Sugar(),
 		state:    &lifecycleState{root: zap.NewNop()},
@@ -711,6 +716,7 @@ func TestHErrorf_LogsAndCallsMessager(t *testing.T) {
 func TestHErrorTo_LogsAndCallsMessager(t *testing.T) {
 	msg := &testMessager{}
 	l := &Logger{
+		base:     zap.NewNop(),
 		zap:      zap.NewNop(),
 		sugar:    zap.NewNop().Sugar(),
 		state:    &lifecycleState{root: zap.NewNop()},
@@ -729,6 +735,7 @@ func TestHErrorTo_LogsAndCallsMessager(t *testing.T) {
 func TestHErrorTof_LogsAndCallsMessager(t *testing.T) {
 	msg := &testMessager{}
 	l := &Logger{
+		base:     zap.NewNop(),
 		zap:      zap.NewNop(),
 		sugar:    zap.NewNop().Sugar(),
 		state:    &lifecycleState{root: zap.NewNop()},
@@ -797,6 +804,7 @@ func TestDebugCtx_InjectsFields(t *testing.T) {
 		return nil
 	}
 	l := &Logger{
+		base:          zap.NewNop(),
 		zap:           zap.NewNop(),
 		sugar:         zap.NewNop().Sugar(),
 		state:         &lifecycleState{root: zap.NewNop()},
@@ -903,7 +911,7 @@ func TestWithContextFields(t *testing.T) {
 // ============================================================
 
 func TestCronAdapter_Error(_ *testing.T) {
-	l := MustNew(WithConsole(false), WithFile(false))
+	l := MustNew(WithConsole(true), WithFile(false))
 	defer l.Sync()
 
 	a := NewCronAdapter(l)
@@ -934,7 +942,7 @@ func TestCronNormalizeKVs(t *testing.T) {
 }
 
 func TestRestyAdapter_ErrorfAndWarnf(_ *testing.T) {
-	l := MustNew(WithConsole(false), WithFile(false))
+	l := MustNew(WithConsole(true), WithFile(false))
 	defer l.Sync()
 
 	a := NewRestyAdapter(l)
@@ -948,7 +956,7 @@ func TestRestyAdapter_ErrorfAndWarnf(_ *testing.T) {
 // ============================================================
 
 func TestSetLevel_InitialLevelIsInfo(t *testing.T) {
-	l := MustNew(WithConsole(false), WithFile(false))
+	l := MustNew(WithConsole(true), WithFile(false))
 	defer l.Sync()
 
 	if got := l.GetLevel(); got != "info" {
@@ -957,7 +965,7 @@ func TestSetLevel_InitialLevelIsInfo(t *testing.T) {
 }
 
 func TestSetLevel_ChangesToDebug(t *testing.T) {
-	l := MustNew(WithConsole(false), WithFile(false))
+	l := MustNew(WithConsole(true), WithFile(false))
 	defer l.Sync()
 
 	l.SetLevel("debug")
@@ -993,10 +1001,12 @@ func TestSetLevel_ErrorSuppressesInfo(t *testing.T) {
 }
 
 func TestSetLevel_InvalidLevelNoChange(t *testing.T) {
-	l := MustNew(WithConsole(false), WithFile(false))
+	l := MustNew(WithConsole(true), WithFile(false))
 	defer l.Sync()
 
-	l.SetLevel("bogus")
+	if err := l.SetLevel("bogus"); err == nil {
+		t.Fatal("SetLevel(bogus) returned nil error")
+	}
 	if got := l.GetLevel(); got != "info" {
 		t.Fatalf("level after invalid SetLevel = %q, want %q", got, "info")
 	}
@@ -1028,7 +1038,7 @@ func TestDurationEncoderOption_UsesStringEncoder(t *testing.T) {
 // ============================================================
 
 func TestDroppedMessages_ZeroWithoutMessager(t *testing.T) {
-	l := MustNew(WithConsole(false), WithFile(false))
+	l := MustNew(WithConsole(true), WithFile(false))
 	defer l.Sync()
 
 	if got := l.DroppedMessages(); got != 0 {
@@ -1377,7 +1387,7 @@ func TestBufferedWithCustomSize(t *testing.T) {
 // ============================================================
 
 func TestDynamicChannelCacheLimit(t *testing.T) {
-	l := MustNew(WithConsole(false), WithFile(false))
+	l := MustNew(WithConsole(true), WithFile(false))
 	defer l.Sync()
 
 	// 写入超过上限的动态 channel

@@ -2,6 +2,7 @@ package logger
 
 import (
 	"context"
+	"fmt"
 
 	"go.uber.org/zap"
 )
@@ -31,7 +32,7 @@ func Sugar() *zap.SugaredLogger {
 	return zap.NewNop().Sugar()
 }
 
-// DroppedMessages 返回异步 Messager 因队列满而丢弃的推送消息数量。
+// DroppedMessages 返回异步 Messager 因队列满或 Sync 排空超时而丢弃的推送消息数量。
 // 如果未配置 Messager，始终返回 0。
 func DroppedMessages() int64 {
 	if state := snapshotLoggerState(); state != nil && state.asyncMsg != nil {
@@ -41,13 +42,16 @@ func DroppedMessages() int64 {
 }
 
 // SetLevel 运行时动态调整日志级别，影响所有 logger（包括 channel）。
-// 支持: debug, info, warn, error, dpanic, panic, fatal.
-func SetLevel(level string) {
-	if l, ok := levelMap[level]; ok {
-		if state := snapshotLoggerState(); state != nil {
-			state.atomicLevel.SetLevel(l)
-		}
+// 支持: debug, info, warn, error, dpanic, panic, fatal；未知级别返回错误且当前级别不变。
+func SetLevel(level string) error {
+	l, ok := levelMap[level]
+	if !ok {
+		return fmt.Errorf("logger: invalid level %q", level)
 	}
+	if state := snapshotLoggerState(); state != nil {
+		state.atomicLevel.SetLevel(l)
+	}
+	return nil
 }
 
 // GetLevel 返回当前日志级别字符串。

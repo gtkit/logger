@@ -11,6 +11,29 @@
 
 ---
 
+## logger v1.9.0 / v2.4.0 — 未发布
+
+> ⚠ 破坏性变更（fail-closed）：输出全关时 `New` 报错；`SetLevel` 返回 `error`。迁移说明见下方 Changed 条目。
+
+### Added
+
+- `WithMessagerDrainTimeout(d)`（v1 + v2）：`Sync` 排空异步推送队列的最长等待，默认 5 秒；超时向 stderr 告警、未执行的推送计入 `DroppedMessages`，后台推送协程继续消费直到外部调用返回。此前排空无上限，外部 `Send` 挂起会卡死进程退出。`d <= 0` 报错
+- `WithStacktraceLevel(level)`（v1 + v2）：附带 stacktrace 的最低级别，默认 `error` 与既有行为一致；空串保留默认，未知级别报错
+
+### Changed
+
+- ⚠ **`WithConsole(false)` 与 `WithFile(false)` 同时生效时 `New` 返回错误**（v1 + v2），取代此前静默回退 stdout。迁移：需要控制台输出的显式 `WithConsole(true)`；需要落盘的保留默认 `WithFile(true)`
+- ⚠ **`SetLevel` 返回 `error`**（v1 包级函数 + v2 `Logger` 方法）：未知级别显式报错且当前级别不变，取代静默忽略。语句式调用 `logger.SetLevel("debug")` 无需改动；把它当方法值或接口赋值的调用方需要更新签名
+- `WithRedactKeys` 多次调用取并集（v1 + v2）。此前后一次调用覆盖前一次，只有最后一组 key 被脱敏
+- `WithChannel` 同名重复注册返回错误（v1 + v2）。此前后者静默覆盖前者
+- channel 路径冲突检查改按最终文件名（`{path}-{level}.log`）比较（v1 + v2）：`./logs/` 与 `./logs` 这类只差尾斜杠的前缀产出不同文件，不再误报
+- `New` 返回的 option 错误不再叠加 `logger: apply option:` 前缀（v1 + v2），错误文本只保留 option 自带的一层 `logger:` 前缀
+- v2 全部记录方法统一 `request_id` 去重：结构化、Sugar key-value、H 系列与 `*Ctx` 系列的调用点字段都按「`With` 预绑定 > 调用点」处理，同源重复保留最后一个；此前仅 `*Ctx` 方法族去重，`l.With(request_id).Info(msg, request_id)` 会输出重复 JSON key
+- v1 `ChannelLogger` 按当前 logger 状态缓存派生结果，热路径不再每条日志重新 `Named`/`With`；状态重配置后自动失效重建
+- 测试文件按 `go fix` 现代化（`sync.WaitGroup.Go`）
+
+---
+
 ## logger v2.3.0 — 2026-07-29
 
 ### Removed

@@ -74,6 +74,9 @@ func (l *Logger) extractCtxFields(ctx context.Context, callSiteHasRequestID bool
 // （与 zap With 链式覆盖直觉、JSON 解析器普遍取末值的行为一致）；
 // 至多一个时零分配原样返回。
 func normalizeRequestID(fields []zap.Field) []zap.Field {
+	if len(fields) < 2 {
+		return fields
+	}
 	count, last := 0, -1
 	for i := range fields {
 		if fields[i].Key == requestIDFieldName {
@@ -98,6 +101,9 @@ func normalizeRequestID(fields []zap.Field) []zap.Field {
 // normalizeRequestIDKV 同源归一化的 kv 形态：兼容「字符串 key+值」与内联 Field，
 // 重复时只保留最后一次出现；至多一个时零分配原样返回。
 func normalizeRequestIDKV(kv []any) []any {
+	if len(kv) < 2 {
+		return kv
+	}
 	// 第一遍：定位全部 request_id 项（起始下标与宽度）
 	type hit struct{ idx, width int }
 	var hits []hit

@@ -116,7 +116,9 @@ logger.Infof("user %s login", uid)                   // ❌ 每条 message 都�
 - 显式配置的 channel 默认会同时写入默认日志输出；可通过 `WithChannelDuplicateToDefault(false)` 改成只写 channel 文件。
 - channel 文件继承全局日志级别、编码格式、切割方式、保留天数、备份数量和压缩策略。
 - logger 会自动创建日志文件的父目录。
-- 如果 channel 路径与默认路径相同，并且开启双写，初始化会直接失败，避免同一条日志被重复写入同一个文件。
+- channel 文件与默认文件、channel 文件之间按**最终文件名**做冲突检查（`{path}-{level}.log`），任一重合初始化直接失败，避免多个 writer 竞争同一个文件；`./logs/` 与 `./logs` 这类只差尾斜杠的前缀产出的是不同文件，不视为冲突。
+- 同名 channel 重复注册（两次 `WithChannel("order", ...)`）初始化直接失败。
+- `WithConsole` 与 `WithFile` 至少一个为 `true`，两者都关闭时 `New` 返回错误。
 
 ## Channel 配置
 
@@ -189,13 +191,15 @@ logger.WithChannel("audit",
 | `WithCompress(b)` | 是否压缩归档 | `true` |
 | `WithMessager(m)` | 外部消息推送 Hook | `nil` |
 | `WithMessagerQueueSize(n)` | 异步推送队列大小 | `1024` |
+| `WithMessagerDrainTimeout(d)` | `Sync` 排空推送队列的最长等待，超时告警并计入 `DroppedMessages` | `5s` |
+| `WithStacktraceLevel(l)` | 附带 stacktrace 的最低级别，空串保留默认 | `error` |
 | `WithContextFields(fn)` | Context 字段提取函数 | `nil` |
 | `WithBuffered(b)` | 是否启用缓冲写入（BufferedWriteSyncer） | `false` |
 | `WithBufferSize(n)` | 缓冲区大小（字节），仅 `WithBuffered(true)` 时生效 | `256KB` |
 | `WithFlushInterval(d)` | 缓冲区自动刷写间隔，仅 `WithBuffered(true)` 时生效 | `30s` |
 | `WithSampling(first, thereafter)` | 启用采样：每 1s 窗口内同 level+message 先放行 `first` 条，之后每 `thereafter` 条放行一条 | 关闭 |
-| `WithRedactKeys(keys...)` | 对命中的结构化字段名脱敏，值替换为 `[REDACTED]` | 无 |
-| `WithChannel(name, ...opts)` | 注册独立 channel 文件路由 | 无 |
+| `WithRedactKeys(keys...)` | 对命中的结构化字段名脱敏，值替换为 `[REDACTED]`；多次调用取并集 | 无 |
+| `WithChannel(name, ...opts)` | 注册独立 channel 文件路由；同名重复注册报错 | 无 |
 
 ### ChannelOption
 
@@ -270,8 +274,20 @@ logger.Info("login", zap.String("user", "bob"), zap.String("password", "secret")
 ```
 
 - 按字段 Key 精确匹配（区分大小写），命中字段值替换为 `[REDACTED]`。
+- 多次调用取并集：基础敏感集与业务追加集可以分开传入，空串 key 忽略。
 - 仅作用于结构化字段；拼进 message 文本的敏感信息不受影响。
 - 不配置时零开销（不包装 core）。
+
+## Stacktrace 级别
+
+默认 `error` 及以上级别的每条日志都附带 stacktrace（与 zap production 一致）。高频 Error 日志场景可以提升门槛省去采栈开销：
+
+```go
+logger.NewZap(
+	logger.WithPath("./logs/app"),
+	logger.WithStacktraceLevel("dpanic"), // 仅 dpanic/panic/fatal 附带 stacktrace
+)
+```
 
 ## 强制团队正确使用（golangci-lint depguard）
 
@@ -339,6 +355,15 @@ logger.NewZap(
 ```
 
 队列满时推送静默丢弃（日志已写入文件，只丢通知），保证日志调用永不阻塞。
+
+`Sync` 会等待队列中的推送执行完毕，最长等 `WithMessagerDrainTimeout`（默认 5 秒）：外部推送挂起时进程退出不会被拖住，超时后向 stderr 告警，尚未执行的推送计入 `DroppedMessages`，后台推送协程继续消费直到外部调用返回。
+
+```go
+logger.NewZap(
+	logger.WithMessager(myFeishuMessager),
+	logger.WithMessagerDrainTimeout(2*time.Second),
+)
+```
 
 ### H 系列方法一览
 
@@ -442,11 +467,13 @@ logger.Channel("order").Infow("created", "order_id", "A100")
 // 查看当前级别
 logger.GetLevel() // "info"
 
-// 临时开启 Debug
-logger.SetLevel("debug")
+// 临时开启 Debug；未知级别返回错误，当前级别不变
+if err := logger.SetLevel("debug"); err != nil {
+	return err
+}
 
 // 排查完毕，恢复
-logger.SetLevel("info")
+_ = logger.SetLevel("info")
 ```
 
 级别变更会立即生效，影响所有 logger（包括 channel）。支持的级别：`debug`、`info`、`warn`、`error`、`dpanic`、`panic`、`fatal`。
@@ -474,7 +501,7 @@ slog.Info("request",
 
 ## 丢弃消息监控
 
-当异步 Messager 队列满时，推送会被静默丢弃。可通过 `DroppedMessages()` 监控丢弃量：
+异步 Messager 队列满、或 `Sync` 排空超时时，推送会被丢弃。可通过 `DroppedMessages()` 监控丢弃量：
 
 ```go
 // 定期上报到监控系统

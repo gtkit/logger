@@ -168,3 +168,15 @@ func BenchmarkInfoCtxDiscard(b *testing.B) {
 		l.InfoCtx(ctx, "discard", zap.Int("i", i))
 	}
 }
+
+// BenchmarkInfoBoundRequestID 预绑定 request_id 的实例上调用非 Ctx 方法：
+// 每次调用都要剔除调用点同名字段，衡量全方法去重的热路径成本。
+func BenchmarkInfoBoundRequestID(b *testing.B) {
+	l := newDiscardCtxLogger().With(zap.String("request_id", "bound"))
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		l.Info("bound", zap.String("key", "value"))
+	}
+}

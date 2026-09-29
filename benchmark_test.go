@@ -149,3 +149,19 @@ func installBenchmarkState(b *testing.B) func() {
 		globalMu.Unlock()
 	}
 }
+
+// BenchmarkChannelWithFieldsReuse 带 Named/With 的 ChannelLogger 复用：派生结果按 state 缓存，
+// 热路径不再每条日志克隆 core。
+func BenchmarkChannelWithFieldsReuse(b *testing.B) {
+	restore := installBenchmarkState(b)
+	defer restore()
+
+	orderLog := Channel("order").Named("api").With(zap.String("tenant", "t1"))
+
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for range b.N {
+		orderLog.Info("bench channel", zap.String("key", "value"))
+	}
+}

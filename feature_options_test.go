@@ -148,6 +148,6 @@ func TestWithSamplingValidatesThereafter(t *testing.T) {
 		t.Fatal("thereafter < 0 应返回错误")
 	}
 	// 复位为可用状态，避免污染后续测试的全局 logger。
-	NewZap(WithConsole(false), WithFile(false))
+	NewZap(WithConsole(true), WithFile(false))
 	Sync()
 }

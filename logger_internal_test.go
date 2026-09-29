@@ -78,7 +78,7 @@ func TestHInfoMessagerRedactsFields(t *testing.T) {
 	msg := newChanMessager(1)
 
 	NewZap(
-		WithConsole(false),
+		WithConsole(true),
 		WithFile(false),
 		WithMessager(msg),
 		WithRedactKeys("password"),
@@ -98,22 +98,20 @@ func TestHInfoMessagerRedactsFields(t *testing.T) {
 }
 
 func TestGlobalLoggerConcurrentReconfigure(_ *testing.T) {
-	NewZap(WithConsole(false), WithFile(false))
+	NewZap(WithConsole(true), WithFile(false))
 	defer Sync()
 
 	var wg sync.WaitGroup
 	var stop atomic.Bool
 
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		for !stop.Load() {
 			Info("concurrent info", zap.String("k", "v"))
 		}
-	}()
+	})
 
 	for range 20 {
-		NewZap(WithConsole(false), WithFile(false))
+		NewZap(WithConsole(true), WithFile(false))
 	}
 
 	stop.Store(true)
@@ -488,7 +486,7 @@ func TestFormatMsg(t *testing.T) {
 
 func TestAsyncMessagerDelivery(t *testing.T) {
 	inner := newChanMessager(10)
-	am := newAsyncMessager(inner, 16)
+	am := newAsyncMessager(inner, 16, defaultMessagerDrainTimeout)
 	defer am.close()
 
 	am.Send("hello")
@@ -524,7 +522,7 @@ func TestAsyncMessagerDelivery(t *testing.T) {
 
 func TestAsyncMessagerCloseDrainsQueue(t *testing.T) {
 	inner := newChanMessager(100)
-	am := newAsyncMessager(inner, 100)
+	am := newAsyncMessager(inner, 100, defaultMessagerDrainTimeout)
 
 	for i := range 10 {
 		am.Send(fmt.Sprintf("msg-%d", i))
@@ -539,7 +537,7 @@ func TestAsyncMessagerCloseDrainsQueue(t *testing.T) {
 
 func TestAsyncMessagerSendAfterCloseIsIgnored(_ *testing.T) {
 	inner := newChanMessager(10)
-	am := newAsyncMessager(inner, 10)
+	am := newAsyncMessager(inner, 10, defaultMessagerDrainTimeout)
 
 	am.close()
 	am.Send("after-close")
@@ -549,19 +547,17 @@ func TestAsyncMessagerSendAfterCloseIsIgnored(_ *testing.T) {
 
 func TestAsyncMessagerCloseWhileSendingDoesNotPanic(_ *testing.T) {
 	inner := newChanMessager(1024)
-	am := newAsyncMessager(inner, 128)
+	am := newAsyncMessager(inner, 128, defaultMessagerDrainTimeout)
 	start := make(chan struct{})
 	var wg sync.WaitGroup
 
 	for range 8 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			<-start
 			for range 256 {
 				am.Send("message")
 			}
-		}()
+		})
 	}
 
 	close(start)
@@ -572,7 +568,7 @@ func TestAsyncMessagerCloseWhileSendingDoesNotPanic(_ *testing.T) {
 
 func TestAsyncMessagerRecoversPanics(t *testing.T) {
 	inner := newChanMessager(10)
-	am := newAsyncMessager(&panicMessager{inner: inner}, 10)
+	am := newAsyncMessager(&panicMessager{inner: inner}, 10, defaultMessagerDrainTimeout)
 
 	am.Send("panic")
 	am.Send("after-panic")
@@ -603,7 +599,7 @@ func TestAsyncMessagerQueueFullDrops(_ *testing.T) {
 	// blockingMessager blocks on each Send to fill the queue.
 	blocker := make(chan struct{})
 	inner := &blockingMessager{block: blocker, started: make(chan struct{})}
-	am := newAsyncMessager(inner, 1)
+	am := newAsyncMessager(inner, 1, defaultMessagerDrainTimeout)
 
 	// The worker goroutine is blocked on the first message.
 	am.Send("first")      // picked up by worker, worker blocks
@@ -641,7 +637,7 @@ func (m *blockingMessager) SendTo(_ string, _ string) {
 // ---------------------------------------------------------------------------
 
 func TestZlogAndSugarNonNil(t *testing.T) {
-	NewZap(WithConsole(false), WithFile(false))
+	NewZap(WithConsole(true), WithFile(false))
 	defer Sync()
 
 	if Zlog() == nil {
@@ -1271,7 +1267,7 @@ func TestUndo(t *testing.T) {
 	// Save the current global logger.
 	before := zap.L()
 
-	NewZap(WithConsole(false), WithFile(false))
+	NewZap(WithConsole(true), WithFile(false))
 
 	// After NewZap, the global logger should differ from before (replaced).
 	afterNewZap := zap.L()
@@ -1296,7 +1292,7 @@ func TestUndo(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestCronAdapterError(_ *testing.T) {
-	NewZap(WithConsole(false), WithFile(false))
+	NewZap(WithConsole(true), WithFile(false))
 	defer Sync()
 
 	a := NewCronAdapter()
@@ -1331,7 +1327,7 @@ func TestCronNormalizeKVs(t *testing.T) {
 }
 
 func TestRestyAdapterMethods(_ *testing.T) {
-	NewZap(WithConsole(false), WithFile(false))
+	NewZap(WithConsole(true), WithFile(false))
 	defer Sync()
 
 	a := NewRestyAdapter()
@@ -1342,7 +1338,7 @@ func TestRestyAdapterMethods(_ *testing.T) {
 }
 
 func TestESAdapterPrintf(_ *testing.T) {
-	NewZap(WithConsole(false), WithFile(false))
+	NewZap(WithConsole(true), WithFile(false))
 	defer Sync()
 
 	a := NewESAdapter()
@@ -1387,7 +1383,7 @@ func TestNewZapWithMessager(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestLogIfNilError(_ *testing.T) {
-	NewZap(WithConsole(false), WithFile(false))
+	NewZap(WithConsole(true), WithFile(false))
 	defer Sync()
 
 	// Should not panic.
@@ -1420,7 +1416,7 @@ func TestLogIfWithError(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestGetLevelDefaultIsInfo(t *testing.T) {
-	NewZap(WithConsole(false), WithFile(false))
+	NewZap(WithConsole(true), WithFile(false))
 	defer Sync()
 
 	if got := GetLevel(); got != "info" {
@@ -1429,7 +1425,7 @@ func TestGetLevelDefaultIsInfo(t *testing.T) {
 }
 
 func TestSetLevelChangesGetLevel(t *testing.T) {
-	NewZap(WithConsole(false), WithFile(false))
+	NewZap(WithConsole(true), WithFile(false))
 	defer Sync()
 
 	SetLevel("debug")
@@ -1466,11 +1462,15 @@ func TestSetLevelAffectsLogOutput(t *testing.T) {
 }
 
 func TestSetLevelInvalidNoChange(t *testing.T) {
-	NewZap(WithConsole(false), WithFile(false))
+	NewZap(WithConsole(true), WithFile(false))
 	defer Sync()
 
-	SetLevel("info")
-	SetLevel("not-a-level")
+	if err := SetLevel("info"); err != nil {
+		t.Fatalf("SetLevel(info): %v", err)
+	}
+	if err := SetLevel("not-a-level"); err == nil {
+		t.Fatal("SetLevel(not-a-level) returned nil error")
+	}
 	if got := GetLevel(); got != "info" {
 		t.Fatalf("after invalid SetLevel: GetLevel() = %q, want %q", got, "info")
 	}
@@ -1481,7 +1481,7 @@ func TestSetLevelInvalidNoChange(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestSlogHandlerNoPanic(t *testing.T) {
-	NewZap(WithConsole(false), WithFile(false))
+	NewZap(WithConsole(true), WithFile(false))
 	defer Sync()
 
 	sl := slog.New(SlogHandler())
@@ -1513,7 +1513,7 @@ func TestSlogHandlerWritesToFile(t *testing.T) {
 }
 
 func TestSlogHandlerRespectsLevel(t *testing.T) {
-	NewZap(WithConsole(false), WithFile(false), WithLevel("error"))
+	NewZap(WithConsole(true), WithFile(false), WithLevel("error"))
 	defer Sync()
 
 	h := SlogHandler()
@@ -1534,13 +1534,11 @@ func TestSlogHandlerConcurrentReconfigure(t *testing.T) {
 	var wg sync.WaitGroup
 	var stop atomic.Bool
 
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		for !stop.Load() {
 			sl.Info("slog concurrent reconfigure", "key", "value")
 		}
-	}()
+	})
 
 	for i := range 20 {
 		NewZap(
@@ -1580,7 +1578,7 @@ func TestDurationEncoderOptionUsesStringEncoder(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestDroppedMessagesZeroWithoutMessager(t *testing.T) {
-	NewZap(WithConsole(false), WithFile(false))
+	NewZap(WithConsole(true), WithFile(false))
 	defer Sync()
 
 	if got := DroppedMessages(); got != 0 {
@@ -1627,7 +1625,7 @@ func TestDroppedMessagesCountsDrops(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestNewReturnsNilOnSuccess(t *testing.T) {
-	err := New(WithConsole(false), WithFile(false))
+	err := New(WithConsole(true), WithFile(false))
 	if err != nil {
 		t.Fatalf("New() returned unexpected error: %v", err)
 	}
@@ -1985,7 +1983,7 @@ func TestBufferedWithCustomSize(t *testing.T) {
 }
 
 func TestDynamicChannelCacheLimit(t *testing.T) {
-	NewZap(WithConsole(false), WithFile(false))
+	NewZap(WithConsole(true), WithFile(false))
 	defer Sync()
 
 	state := snapshotLoggerState()
