@@ -11,6 +11,14 @@
 
 ---
 
+## logger v1.10.0 / v2.5.0 — 未发布
+
+### Added
+
+- 导出哨兵错误 `ErrNoOutput`（v1 + v2）：`WithConsole(false)` 与 `WithFile(false)` 同时生效时 `New` 返回它，调用方用 `errors.Is` 判定后自行兜底，例如追加 `WithConsole(true)` 重建。错误文本不变，按文本匹配的既有调用方不受影响
+
+---
+
 ## logger v1.9.0 / v2.4.0 — 2026-09-29
 
 > ⚠ 破坏性变更（fail-closed）：输出全关时 `New` 报错；`SetLevel` 返回 `error`。迁移说明见下方 Changed 条目。

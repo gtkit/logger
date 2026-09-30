@@ -118,7 +118,14 @@ logger.Infof("user %s login", uid)                   // ❌ 每条 message 都�
 - logger 会自动创建日志文件的父目录。
 - channel 文件与默认文件、channel 文件之间按**最终文件名**做冲突检查（`{path}-{level}.log`），任一重合初始化直接失败，避免多个 writer 竞争同一个文件；`./logs/` 与 `./logs` 这类只差尾斜杠的前缀产出的是不同文件，不视为冲突。
 - 同名 channel 重复注册（两次 `WithChannel("order", ...)`）初始化直接失败。
-- `WithConsole` 与 `WithFile` 至少一个为 `true`，两者都关闭时 `New` 返回错误。
+- `WithConsole` 与 `WithFile` 至少一个为 `true`，两者都关闭时 `New` 返回 `ErrNoOutput`。库不做回退，兜底由调用方用 `errors.Is` 判定后决定：
+
+```go
+err := logger.New(opts...)
+if errors.Is(err, logger.ErrNoOutput) {
+	err = logger.New(append(opts, logger.WithConsole(true))...)
+}
+```
 
 ## Channel 配置
 

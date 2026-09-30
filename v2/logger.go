@@ -94,6 +94,10 @@ type Logger struct {
 	boundRequestID bool
 }
 
+// ErrNoOutput 表示 WithConsole 与 WithFile 同时为 false，logger 没有任何输出目标。
+// New 在该配置下返回它；调用方可用 errors.Is 判定并自行兜底，例如追加 WithConsole(true) 重建。
+var ErrNoOutput = errors.New("logger: no output enabled, set WithConsole(true) or WithFile(true)")
+
 // New 按 Functional Options 构建 Logger；失败返回 error。
 // 默认将实例安装为 zap 全局 logger（zap.L()/zap.S()），可经 WithReplaceGlobals(false) 关闭。
 // 使用完毕通过 Sync 释放资源。
@@ -122,7 +126,7 @@ func build(cfg *Config) (*Logger, error) {
 	if !cfg.consoleStdout && !cfg.fileStdout {
 		// 曾静默回退 stdout：调用方明确关闭了全部输出却仍有日志刷进 stdout，
 		// 会污染 CLI 协议输出；配置错误应在启动期暴露。
-		return nil, errors.New("logger: no output enabled, set WithConsole(true) or WithFile(true)")
+		return nil, ErrNoOutput
 	}
 	applyBasePath(cfg)
 	cfg.fieldRedactor = newFieldRedactor(cfg.redactKeys)

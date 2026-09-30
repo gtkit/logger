@@ -98,6 +98,10 @@ type channelConfig struct {
 	duplicateToDefault bool
 }
 
+// ErrNoOutput 表示 WithConsole 与 WithFile 同时为 false，logger 没有任何输出目标。
+// New 在该配置下返回它；调用方可用 errors.Is 判定并自行兜底，例如追加 WithConsole(true) 重建。
+var ErrNoOutput = errors.New("logger: no output enabled, set WithConsole(true) or WithFile(true)")
+
 // New initializes the package-level logger, returning an error on failure.
 // It is safe to call repeatedly.
 func New(opts ...Option) error {
@@ -127,7 +131,7 @@ func New(opts ...Option) error {
 	if !cfg.consoleStdout && !cfg.fileStdout {
 		// 曾静默回退 stdout：调用方明确关闭了全部输出却仍有日志刷进 stdout，
 		// 会污染 CLI 协议输出；配置错误应在启动期暴露。
-		return errors.New("logger: no output enabled, set WithConsole(true) or WithFile(true)")
+		return ErrNoOutput
 	}
 	cfg.fieldRedactor = newFieldRedactor(cfg.redactKeys)
 
